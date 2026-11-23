@@ -5,6 +5,9 @@
 - 남의 채팅방 → 403
 - 없는 채팅방 → 404
 메시지 보내기의 응답에는 답장이 담기지 않는다. 답장은 2단계부터 실시간 이벤트로 온다.
+
+CSRF: GET 응답이 csrftoken 쿠키를 심어 준다. 화면 JS는 POST할 때 그 값을
+X-CSRFToken 헤더에 담아 보내야 한다. 없으면 Django가 403을 돌려준다.
 """
 import json
 from functools import wraps
@@ -13,6 +16,7 @@ from django.db.models import Count, F, OuterRef, Q, Subquery
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_http_methods
 
 from .models import Friendship, Message
@@ -22,8 +26,13 @@ PAGE_SIZE = 30
 PAGE_SIZE_MAX = 100
 
 
+def json_response(data, status=200):
+    # 한글을 \uXXXX로 바꾸지 않고 그대로 내보낸다 (브라우저·curl에서 바로 읽힌다)
+    return JsonResponse(data, status=status, json_dumps_params={'ensure_ascii': False})
+
+
 def error(status, detail):
-    return JsonResponse({'detail': detail}, status=status)
+    return json_response({'detail': detail}, status=status)
 
 
 def login_required_json(view):
@@ -61,6 +70,7 @@ def message_json(m):
 
 
 @require_GET
+@ensure_csrf_cookie
 @login_required_json
 def friend_list(request):
     """GET /api/friends/ — 친구 목록 (마지막 메시지, 안 읽은 수). 최근 대화한 방이 위로 온다."""
@@ -96,10 +106,11 @@ def friend_list(request):
             'last_message': message_json(last) if last else None,
             'unread_count': room.unread_count,
         })
-    return JsonResponse({'friends': friends})
+    return json_response({'friends': friends})
 
 
 @require_http_methods(['GET', 'POST'])
+@ensure_csrf_cookie
 @login_required_json
 def room_messages(request, room_id):
     """GET: 이전 대화 불러오기 / POST: 메시지 보내기."""
@@ -125,7 +136,7 @@ def send_message(request, room):
 
     message = Message.objects.create(room=room, sender=Message.Sender.USER, text=text)
     # TODO(2단계): 여기서 답장 계획기를 불러 ReplyPlan을 만든다
-    return JsonResponse(
+    return json_response(
         {'id': message.id, 'status': message.status, 'created_at': iso(message.created_at)},
         status=201,
     )
@@ -153,4 +164,4 @@ def list_messages(request, room):
     has_more = len(page) > limit
     page = page[:limit]
     page.reverse()
-    return JsonResponse({'messages': [message_json(m) for m in page], 'has_more': has_more})
+    return json_response({'messages': [message_json(m) for m in page], 'has_more': has_more})

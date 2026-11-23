@@ -2,7 +2,7 @@ import json
 from datetime import timedelta
 
 from django.db import IntegrityError
-from django.test import TestCase
+from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
@@ -173,6 +173,27 @@ class FriendListTests(ChatAPITestBase):
     def test_anonymous_returns_401(self):
         self.client.logout()
         self.assertEqual(self.client.get(self.url).status_code, 401)
+
+
+class CsrfFlowTests(ChatAPITestBase):
+    """브라우저처럼 CSRF를 검사하는 클라이언트로 화면 JS의 흐름을 확인한다."""
+
+    def setUp(self):
+        self.client = Client(enforce_csrf_checks=True)
+        self.client.force_login(self.jisu)
+
+    def test_get_sets_cookie_and_post_needs_header(self):
+        self.client.get(reverse('chat:friend-list'))
+        token = self.client.cookies['csrftoken'].value
+        url = self.messages_url(self.room.id)
+        body = json.dumps({'text': '뭐해?'})
+
+        without = self.client.post(url, data=body, content_type='application/json')
+        with_header = self.client.post(url, data=body, content_type='application/json', HTTP_X_CSRFTOKEN=token)
+
+        self.assertEqual(without.status_code, 403)
+        self.assertEqual(with_header.status_code, 201)
+        self.assertEqual(Message.objects.count(), 1)
 
 
 class ModelRuleTests(ChatAPITestBase):
