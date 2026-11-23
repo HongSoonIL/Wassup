@@ -142,6 +142,10 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
+# 업로드 파일 (캐릭터 프사, 배경, 사진). /media/는 .gitignore에 있다
+MEDIA_URL = 'media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
