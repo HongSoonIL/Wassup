@@ -29,6 +29,22 @@ class ChatAPITestBase(TestCase):
         return self.client.post(self.messages_url(room_id), data=json.dumps(payload), content_type='application/json')
 
 
+class ChatPageTests(ChatAPITestBase):
+    def test_owner_receives_chat_entry_and_csrf_cookie(self):
+        self.client.force_login(self.jisu)
+        response = self.client.get(reverse('chat-page', args=[self.room.id]))
+        self.assertContains(response, f'data-room-id="{self.room.id}"')
+        self.assertContains(response, '/static/assets/chat.js')
+        self.assertContains(response, '/static/assets/chat.css')
+        self.assertIn('csrftoken', response.cookies)
+
+    def test_room_access_matches_chat_api(self):
+        self.assertEqual(self.client.get(reverse('chat-page', args=[self.room.id])).status_code, 401)
+        self.client.force_login(self.jisu)
+        self.assertEqual(self.client.get(reverse('chat-page', args=[self.other_room.id])).status_code, 403)
+        self.assertEqual(self.client.get(reverse('chat-page', args=[999999])).status_code, 404)
+
+
 class SendMessageTests(ChatAPITestBase):
     def setUp(self):
         self.client.force_login(self.jisu)

@@ -1,0 +1,15 @@
+{% load static %}
+<!doctype html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>채팅 · wassup</title>
+    <link rel="stylesheet" href="{% static 'assets/chat.css' %}">
+    <script type="module" src="{% static 'assets/chat.js' %}"></script>
+</head>
+<body>
+    <div id="root" data-room-id="{{ room_id }}"></div>
+    <noscript>채팅을 사용하려면 브라우저에서 자바스크립트를 켜 주세요.</noscript>
+</body>
+</html>

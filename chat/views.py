@@ -14,7 +14,7 @@ from functools import wraps
 
 from django.db.models import Count, F, OuterRef, Q, Subquery
 from django.http import JsonResponse
-from django.shortcuts import get_object_or_404
+from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_http_methods
@@ -55,6 +55,16 @@ def get_own_room(request, room_id):
 
 def iso(dt):
     return timezone.localtime(dt).isoformat(timespec='seconds') if dt else None
+
+
+@require_GET
+@login_required_json
+@ensure_csrf_cookie
+def chat_page(request, room_id):
+    room = get_own_room(request, room_id)
+    if room is None:
+        return error(403, '내 채팅방이 아니에요.')
+    return render(request, 'chat/room.html', {'room_id': room.pk})
 
 
 def message_json(m):

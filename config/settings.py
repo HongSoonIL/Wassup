@@ -141,6 +141,9 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+FRONTEND_ASSETS = BASE_DIR / 'frontend' / 'dist' / 'assets'
+STATICFILES_DIRS = [('assets', FRONTEND_ASSETS)] if FRONTEND_ASSETS.is_dir() else []
 
 # 업로드 파일 (캐릭터 프사, 배경, 사진). /media/는 .gitignore에 있다
 MEDIA_URL = 'media/'

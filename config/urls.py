@@ -19,9 +19,12 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 
+from chat.views import chat_page
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('chat.urls')),
+    path('chat/<int:room_id>/', chat_page, name='chat-page'),
 ]
 
 # 개발 중에만 Django가 업로드 파일(프사 등)을 직접 내준다
