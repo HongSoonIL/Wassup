@@ -15,11 +15,12 @@ from functools import wraps
 from django.db.models import Count, F, OuterRef, Q, Subquery
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, render
-from django.utils import timezone
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_http_methods
 
 from .models import Friendship, Message
+from .replies import accept_message
+from .serialization import iso, message_json
 
 MESSAGE_MAX_LENGTH = 1000
 PAGE_SIZE = 30
@@ -53,10 +54,6 @@ def get_own_room(request, room_id):
     return room if room.user_id == request.user.id else None
 
 
-def iso(dt):
-    return timezone.localtime(dt).isoformat(timespec='seconds') if dt else None
-
-
 @require_GET
 @login_required_json
 @ensure_csrf_cookie
@@ -65,18 +62,6 @@ def chat_page(request, room_id):
     if room is None:
         return error(403, '내 채팅방이 아니에요.')
     return render(request, 'chat/room.html', {'room_id': room.pk})
-
-
-def message_json(m):
-    return {
-        'id': m.id,
-        'sender': m.sender,
-        'kind': m.kind,
-        'text': m.text,
-        'status': m.status,
-        'created_at': iso(m.created_at),
-        'read_at': iso(m.read_at),
-    }
 
 
 @require_GET
@@ -144,8 +129,7 @@ def send_message(request, room):
     if len(text) > MESSAGE_MAX_LENGTH:
         return error(400, f'메시지는 {MESSAGE_MAX_LENGTH}자까지 보낼 수 있어요.')
 
-    message = Message.objects.create(room=room, sender=Message.Sender.USER, text=text)
-    # TODO(2단계): 여기서 답장 계획기를 불러 ReplyPlan을 만든다
+    message = accept_message(room.id, text)
     return json_response(
         {'id': message.id, 'status': message.status, 'created_at': iso(message.created_at)},
         status=201,

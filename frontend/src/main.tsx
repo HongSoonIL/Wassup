@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { ArrowUp, ChevronLeft, Coffee, Info, MessageCircle, X, ZoomIn } from 'lucide-react'
 import { getFriends, getMessages, mergeMessages, sendMessage } from './chat'
 import type { Friend, Message } from './chat'
+import { subscribeToRoom } from './live'
 import { sampleFriend, sampleMessages } from './preview'
 import './style.css'
 
@@ -70,16 +71,62 @@ function Chat() {
         setLoadError('')
       } catch (e) {
         if (active) setLoadError((e as Error).message)
-      } finally { syncing = false }
+      } finally {
+        syncing = false
+        if (active && needsSync) {
+          needsSync = false
+          void sync()
+        }
+      }
     }
+    let typingTimer = 0
+    let needsSync = false
+    function stopTyping() {
+      clearTimeout(typingTimer)
+      setTyping(false)
+    }
+    function resync() {
+      if (syncing) needsSync = true
+      else void sync()
+    }
+
+    const disconnect = subscribeToRoom(room, event => {
+      switch (event.type) {
+        case 'message.read':
+          setMessages(old => old.map(message => message.id === event.message_id
+            ? { ...message, status: 'read', read_at: event.read_at }
+            : message))
+          resync()
+          break
+        case 'message.new':
+          stopTyping()
+          setMessages(old => mergeMessages(old, [event.message]))
+          break
+        case 'typing.start': {
+          stopTyping()
+          const expiresIn = event.expires_at ? Date.parse(event.expires_at) - Date.now() : 8000
+          const duration = Number.isFinite(expiresIn) ? Math.min(expiresIn, 30_000) : 8000
+          if (duration > 0) {
+            setTyping(true)
+            typingTimer = window.setTimeout(stopTyping, duration)
+          }
+          break
+        }
+        case 'typing.stop':
+          stopTyping()
+          break
+      }
+    }, resync, stopTyping)
     void sync()
-    // REST refresh also restores the current read state when the tab becomes visible.
+    // REST recovers messages or read state missed during a disconnect or a suspended tab.
     const tick = window.setInterval(sync, 3000)
     document.addEventListener('visibilitychange', sync)
     window.addEventListener('online', sync)
     return () => {
       active = false
       clearInterval(tick)
+      clearTimeout(typingTimer)
+      disconnect()
       document.removeEventListener('visibilitychange', sync)
       window.removeEventListener('online', sync)
     }

@@ -104,6 +104,13 @@ DATABASES = {
 
 # Redis — Celery와 Channels 설정(2주차)에서 쓴다
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://127.0.0.1:6379/0')
+WASSUP_REPLY_DEMO_SECONDS = int(os.environ.get('WASSUP_REPLY_DEMO_SECONDS', '0'))
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {'hosts': [REDIS_URL]},
+    },
+}
 
 
 # Password validation
