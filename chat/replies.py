@@ -50,10 +50,7 @@ def accept_message(room_id, text, source_post_id=None):
     )
     enqueue(message)
     plan = room.reply_plans.select_for_update().filter(status__in=ACTIVE).first()
-    phone_open = False
     if plan and plan.status == ReplyPlan.Status.SENDING:
-        phone_open = plan.bubbles.filter(status=ReplyBubble.Status.SENT,
-                                         message__created_at__range=(now - PHONE_OPEN_WINDOW, now)).exists()
         cancel_remaining(plan)
         transaction.on_commit(lambda: publish_room_events(room_id, [{'type': 'typing.stop'}]))
         plan = None
@@ -76,10 +73,13 @@ def accept_message(room_id, text, source_post_id=None):
             ]
         )
     else:
-        continuing = room.messages.filter(sender=Message.Sender.CHARACTER,
-                                          created_at__gte=now - CONVERSATION_WINDOW).exists()
+        last_sent = (room.messages.filter(sender=Message.Sender.CHARACTER,
+                                          created_at__range=(now - CONVERSATION_WINDOW, now))
+                     .order_by('-created_at').values_list('created_at', flat=True).first())
+        phone_open = last_sent is not None and now - last_sent <= PHONE_OPEN_WINDOW
         timing = plan_reply(now, room.character.routines.all(),
-                            persona=getattr(room.character, 'persona', None), continuing=continuing, phone_open=phone_open)
+                            persona=getattr(room.character, 'persona', None),
+                            continuing=last_sent is not None, phone_open=phone_open)
         demo_seconds = settings.WASSUP_REPLY_DEMO_SECONDS
         if settings.DEBUG and demo_seconds > 0:
             duration = timedelta(seconds=demo_seconds)

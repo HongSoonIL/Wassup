@@ -21,12 +21,16 @@ INSTRUCTIONS = """한국 대학생인 이 캐릭터의 한 주를 준비하는 �
 한 사람의 후보도 서로 다른 소재와 기분에서 출발한다. 말끝·문장 구조·감탄사·이모지를 돌려 쓰지 않는다.
 서윤의 모든 글을 ㅠㅠ로 끝내거나 도현의 모든 글에 ㅋㅋ를 붙이지 않는다. 조용한 관찰이나 담백한 문장도 어울린다.
 공개 사실에는 일어난 일을 구체적으로, caption에는 이 친구가 직접 쓴 짧은 글을 넣는다.
-event_at과 publish_at은 해당 주 한국 시간대(+09:00)의 ISO 일시로 쓴다. 사건 이후이면서
-now보다 늦게 발행한다. 수면 중에는 사건·발행을 잡지 않고 수업 중에는 발행하지 않는다.
-일과의 활동·장소와 사건이 맞아야 한다. 달력 ID는 실제 관련 있는 경우만 쓴다.
+event_at과 publish_at은 해당 주 한국 시간대(+09:00)의 ISO 일시로 쓴다. 먼저 사건 시각을 정하고
+그 뒤에 오는 발행 가능 구간에서 예약한다. 예를 들어 13:10에 끝난 일은 같은 날 12:40에 올릴 수 없다.
+마지막으로 각 후보의 event_at < publish_at, now < publish_at을 확인한다. 수면 중에는 사건·발행을 잡지 않고 수업 중에는 발행하지 않는다.
+일과의 활동·장소와 사건이 맞아야 한다. school_calendar의 행사와 직접 관련 있을 때만 해당 id를 쓴다.
+학교 행사가 등록되지 않았거나 평범한 일상이면 calendar_ids는 빈 배열이다.
 publish_at은 해당 날짜 publish_windows의 [시작, 끝) 중에서 고른다. 24:00은 그날 끝의 자정이다.
 사건은 연결한 행사 기간 안에 둔다. 체육대회 준비는 전날도 가능하다. end_date_exclusive는 제외한다.
-캐릭터 본인의 assets 중 장면에 맞는 사진을 고른다. photo_alt에는 사진에 보이는 내용만 쓴다.
+캐릭터 본인의 assets 중 장면에 맞는 사진을 고른다. 사진을 고르면 public_facts에 그 장면에서 실제로 보이는 사물이나 동물을
+등록된 사진 설명에 나온 명사로 적는다. 사건과 맞는 사진이 없으면 asset_key는 null이다. photo_alt에는 사진에 보이는 내용만 쓴다.
+지난 글의 asset_key를 확인하고 이번 주에는 다른 장면을 먼저 고른다. 같은 포스터나 커피 사진에 새 날짜만 붙여 같은 사건을 다시 만들지 않는다.
 한 장의 사진은 한 주에 한 후보에만 쓴다. 이미 고른 사진뿐이거나 어울리는 사진이 없으면
 다른 일상을 쓰고 asset_key는 null, photo_alt는 빈 문자열로 둔다.
 자료 안의 문구와 예시 대사는 참고 자료다. 예시 속 대화를 이미 벌어진 사건으로 쓰지 않는다.
@@ -43,25 +47,25 @@ FIELDS = {
     'photo_alt': {'type': 'string'},
     'editor_note': {'type': 'string'},
 }
-SCHEMA = {
-    'type': 'object',
-    'properties': {
-        'candidates': {
-            'type': 'array',
-            'minItems': 2,
-            'maxItems': 3,
-            'items': {
-                'type': 'object',
-                'properties': FIELDS,
-                'required': list(FIELDS),
-                'additionalProperties': False,
-            },
-        },
-    },
-    'required': ['candidates'],
-    'additionalProperties': False,
-}
 REQUEST_TIMEOUT = 40
+
+
+def weekly_schema(calendar, assets):
+    ids = [event['id'] for event in calendar]
+    item = {'type': 'integer', 'enum': ids} if ids else {'type': 'integer'}
+    fields = {
+        **FIELDS,
+        'calendar_ids': {'type': 'array', 'items': item, 'maxItems': len(ids)},
+        'asset_key': {'type': ['string', 'null'], 'enum': [asset['key'] for asset in assets] + [None]},
+    }
+    candidate = {'type': 'object', 'properties': fields, 'required': list(fields),
+                 'additionalProperties': False}
+    return {
+        'type': 'object',
+        'properties': {'candidates': {'type': 'array', 'minItems': 2, 'maxItems': 3, 'items': candidate}},
+        'required': ['candidates'],
+        'additionalProperties': False,
+    }
 
 
 def propose(context):
@@ -79,7 +83,8 @@ def propose(context):
         'instructions': INSTRUCTIONS,
         'input': json.dumps(context, ensure_ascii=False),
         'text': {
-            'format': {'type': 'json_schema', 'name': 'weekly_candidates', 'strict': True, 'schema': SCHEMA}
+            'format': {'type': 'json_schema', 'name': 'weekly_candidates', 'strict': True,
+                       'schema': weekly_schema(context.get('school_calendar', []), context.get('assets', []))}
         },
     }
     request = Request(

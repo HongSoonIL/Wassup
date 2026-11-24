@@ -240,6 +240,20 @@ class RoomMemoryReplyTests(TestCase):
 
 
 class DialogueContractTests(SimpleTestCase):
+    def test_personal_recall_does_not_supply_private_facts_to_every_turn(self):
+        today = NOW.date()
+        exam = dict(id=1, kind='schedule', text='통계 시험', event_date=today)
+        taste = dict(id=2, kind='preference', text='피스타치오 젤라토 선호', event_date=None)
+        for question, ids in [
+            ('지금 뭐 해?', []), ('나 이제 잘게 ㅋㅋ 잘 자', []), ('이 사진 뭐 찍었어?', []),
+            ('점심 뭐 먹지? 하나만 골라줘', []), ('너는 통계 시험 언제 봐?', []),
+            ('내 통계 시험 며칠이었지?', [1]), ('통계 얘기했었지?', [1]),
+            ('너는 통계 시험 언제 봐? 내가 좋아하는 젤라토는?', [2]),
+        ]:
+            with self.subTest(question=question):
+                memories = dialogue.relevant_memories([exam, taste], question, today)
+                self.assertEqual([m['id'] for m in memories], ids)
+
     def test_adapter_rejects_malformed_claims_and_unoffered_ids(self):
         context = {'character': {'bubble_range': [1, 2]}, 'authorized_memories': [{'id': 27}]}
         good = {'bubbles': ['기억해'], 'used_memory_ids': [27]}

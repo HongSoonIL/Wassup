@@ -72,6 +72,8 @@ def plan_reply(
         delay_range = (1, 3)
     elif continuing and state == State.FREE:
         delay_range = (3, 10)
+    elif continuing and state == State.LEISURE:
+        delay_range = (10, 60)
     delay = timedelta(seconds=max(2, round(rng.randint(*delay_range) * speed)))
 
     blocked = []

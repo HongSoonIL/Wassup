@@ -46,6 +46,12 @@ def sample_week(context):
         )
 
     artist = owner['name'] == '서윤'
+    if artist and 'studio-print' not in assets and 'dubu-home' in assets:
+        add(start + timedelta(days=4), time(19, 50), 'dubu-home',
+            '담요 펴자마자 와서 자리 잡음', ['두부가 겨자색 담요 위에 앞발을 포개고 앉았다.'])
+    elif not artist and 'cafe-interior' not in assets and 'cafe-close' in assets:
+        add(start + timedelta(days=3), time(22, 5), 'cafe-close',
+            '피처까지 엎어 놓고 퇴근', ['카페에서 마감하며 씻은 피처를 바에 엎어 두었다.'])
     for event in calendar:
         first = date.fromisoformat(event['start_date'])
         if artist and event['kind'] == 'exams':

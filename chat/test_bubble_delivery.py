@@ -64,6 +64,24 @@ class BubbleDeliveryTests(TestCase):
     def test_interruption_after_worker_outage_keeps_normal_leisure_phone_check(self):
         self.assertGreaterEqual(self.interrupt_in_leisure(timedelta(minutes=20)), timedelta(minutes=10))
 
+    def test_leisure_followup_after_final_bubble_uses_actual_delivery_time(self):
+        plan = start_plan(self.room, ['방금 집 왔어'])
+        actual = plan.reply_at + timedelta(minutes=15)
+        dispatch_due(actual)
+        RoutineTemplate.objects.create(character=self.room.character, weekday=NOW.weekday(), start_time=time(14),
+                                       end_time=time(17), state=State.LEISURE)
+        for age, low, high in [(5, 2, 3), (31, 10, 60), (301, 600, 3600)]:
+            with self.subTest(age=age):
+                instant = actual + timedelta(seconds=age)
+                with patch('chat.replies.world_now', return_value=instant), override_settings(DEBUG=False):
+                    question = accept_message(self.room.pk, '뭐 하고 쉴 거야?')
+                followup = self.room.reply_plans.get(trigger_message=question)
+                delay = (followup.read_at - instant).total_seconds()
+                self.assertLessEqual(low, delay)
+                self.assertLessEqual(delay, high)
+                # Each subcase asks independently after the same delivery.
+                followup.delete()
+
     def test_late_workers_restart_from_the_actual_delivery_and_typing_times(self):
         plan = start_plan(self.room, ['첫째', '둘째', '셋째'])
         late = plan.reply_at + timedelta(hours=1)

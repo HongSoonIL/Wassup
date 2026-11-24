@@ -16,7 +16,7 @@ from django.db import IntegrityError, connection, connections, transaction
 from django.test import SimpleTestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 
-from llm.weekly import WeeklyError, propose
+from llm.weekly import WeeklyError, propose, weekly_schema
 from llm.weekly_fixture import sample_week
 from world.models import Character, FeedPost, PostPhoto, PostRevision, PublicationWeek, SchoolEvent
 from world.publication import LEASE, available_weeks, claim_week, generate_week
@@ -108,8 +108,11 @@ class WeeklyGenerationTests(TransactionTestCase):
                 ['artist-history'] if artist else ['included-boundary'],
             )
             self.assertEqual(
-                [a['key'] for a in context['assets']], ['studio-print'] if artist else ['cafe-interior']
+                [a['key'] for a in context['assets']],
+                ['dubu-home', 'studio-print'] if artist else ['cafe-close', 'cafe-interior'],
             )
+            fields = form['schema']['properties']['candidates']['items']['properties']
+            self.assertEqual(fields['asset_key']['enum'], [a['key'] for a in context['assets']] + [None])
             requests.append(context)
             text = json.dumps(sample_week(context), ensure_ascii=False)
             return BytesIO(
@@ -141,6 +144,20 @@ class WeeklyGenerationTests(TransactionTestCase):
                 self.assertLess(post.event_at, post.publish_at)
                 self.assertIsNotNone(post.versions.get().snapshot['event_at'])
 
+    def test_unused_photos_take_priority_after_a_published_week(self):
+        def assets():
+            contexts = contexts_for(MONDAY, calendar_for(MONDAY), NOW)
+            return {c['character']['name']: [a['key'] for a in c['assets']] for c in contexts}
+
+        previous = self.history(self.artist, NOW - timedelta(days=2), '포스터')
+        previous.photo_id = 'studio-print'
+        previous.save(update_fields=['photo'])
+        self.assertEqual(assets(), {'서윤': ['dubu-home'], '도현': ['cafe-close', 'cafe-interior']})
+        other = self.history(self.artist, NOW - timedelta(days=1), '두부')
+        other.photo_id = 'dubu-home'
+        other.save(update_fields=['photo'])
+        self.assertEqual(assets()['서윤'], ['dubu-home', 'studio-print'])
+
     def test_validation_rejects_wrong_owner_bounds_schedule_links_and_duplicates(self):
         context = contexts_for(MONDAY, calendar_for(MONDAY), NOW)[0]
         valid = sample_week(context)
@@ -169,6 +186,19 @@ class WeeklyGenerationTests(TransactionTestCase):
             candidates_for(context, {'candidates': [row]}, NOW)
         with self.assertRaisesRegex(WeeklyError, '중복'):
             candidates_for({**context, 'recent_posts': [row]}, valid, NOW)
+
+    def test_wrong_photo_suggestion_leaves_the_asset_for_a_matching_scene(self):
+        context = next(c for c in contexts_for(MONDAY, calendar_for(MONDAY), NOW)
+                       if c['character']['name'] == '서윤')
+        proposal = sample_week(context)
+        for row in proposal['candidates']:
+            row.update(asset_key='dubu-home', photo_alt='모델이 제안한 설명')
+        proposal['candidates'][0].update(caption='손이 차다', public_facts=['작업실에서 따뜻한 음료를 마셨다.'])
+        proposal['candidates'][1].update(caption='두부랑 저녁', public_facts=['두부가 담요에 앉았다.'])
+        first, second = candidates_for(context, proposal, NOW)
+        self.assertEqual((first['photo_id'], first['photo_alt']), (None, ''))
+        self.assertEqual(second['photo_id'], 'dubu-home')
+        self.assertEqual(second['photo_alt'], PostPhoto.objects.get(pk='dubu-home').alt)
 
     def test_second_response_failure_no_partial_week_and_explicit_retry(self):
         def propose(context):
@@ -382,6 +412,14 @@ class WeeklyGenerationTests(TransactionTestCase):
 
 @override_settings(LLM_BACKEND='openai', LLM_API_KEY='unused-test-value', LLM_MODEL='')
 class ProviderErrorsTests(SimpleTestCase):
+    def test_calendar_references_are_constrained_per_request(self):
+        def calendar_field(calendar):
+            return weekly_schema(calendar, [])['properties']['candidates']['items']['properties']['calendar_ids']
+
+        self.assertEqual(calendar_field([])['maxItems'], 0)
+        self.assertEqual(calendar_field([{'id': 34}])['items']['enum'], [34])
+        self.assertNotIn('enum', calendar_field([])['items'])
+
     def test_refusal_incomplete_and_malformed_response_are_actionable(self):
         for response in (
             {'status': 'completed', 'output': [{'type': 'message', 'content': [{'type': 'refusal'}]}]},

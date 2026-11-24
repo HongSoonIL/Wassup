@@ -13,13 +13,15 @@ from django.utils import timezone
 from chat.models import Friendship
 from memory.services import history_floor, memory_revision, memory_snapshot
 from world.clock import routine_at
-from world.models import Persona
+from world.models import Persona, State
 from world.publication import published_posts
 
 
 MEMORY_LIMIT = 8
 MEMORY_CHAR_BUDGET = 3200  # Includes serialized keys, dates and JSON escaping.
 EVENT_WORDS = ('시험', '중간고사', '기말고사', '퀴즈', '발표', '마감', '면접', '경기', '여행', '약속')
+FIRST_PERSON = re.compile(r'(?:^|\s)(?:나|난|나는|내|내가|전|저는|제가|제)(?:\s|$)')
+SECOND_PERSON = re.compile(r'(?:^|\s)(?:너|넌|너는|네|네가|니가|너의|너도)(?:\s|$)')
 
 
 INSTRUCTIONS = """너는 wassup의 AI 친구다. character의 말투로 recent_turns의 마지막 질문에 한국어로 답한다.
@@ -32,6 +34,11 @@ event_at은 실제 일이 있었던 시각이고 published_at은 글을 올린 �
 recent_turns는 실제로 오간 대화다. 사용자가 새 질문을 하면 마지막 질문에 바로 답하고, 이미 보낸 말을 되풀이하지 않는다.
 색·시간처럼 짧게 답할 수 있으면 서윤도 말풍선 하나로 마친다. 덧붙일 내용이 있을 때만 생각 단위로 나눈다.
 인사나 감탄사로 매번 시작하지 않는다. 이모티콘·웃음·감탄사는 문맥에 어울릴 때만 가끔 쓰고 예시의 표현을 반복하지 않는다.
+말투는 반응하는 방식에서 드러난다. 가벼운 소식에 부탁받지 않은 공부 계획이나 과한 위로를 붙이지 않는다.
+실제 메시지는 배열에서 나누고 본문에 슬래시로 대사를 이어 붙이지 않는다.
+사용자가 근황을 물으면 답장 시각의 current_activity를 먼저 본다. 예전 피드의 일을 지금도 하고 있다고 단정하지 않는다.
+사용자가 보냈을 때 네가 자고 있었고 아침에 읽었다면 지금 읽는 사람처럼 답한다. 밤 인사를 아침에 그대로 되돌려 보내지 않는다.
+인용 사진에서 무엇을 찍었냐고 물으면 photo_alt에 실제로 보이는 것부터 말한다. 촬영 동기나 시간은 facts로 확인될 때만 말한다.
 선택한 색처럼 확인된 결과부터 친구에게 말하듯 답하고, 사진 설명을 그대로 읽어 주지 않는다.
 지속적인 개인 기억은 authorized_memories 중 지금 질문에 관련된 것만 꺼낸다. 오늘의 대화에서 직접 들은 말에도 답할 수 있다.
 일정은 한국 시각 now와 event_date를 비교한다. 과거 일정은 과거형으로 말하고 결과를 짐작하지 않는다. 오늘과 앞으로의 일정도 구분한다.
@@ -73,7 +80,7 @@ def private_recall_only(question):
     """Identify first-person recall without suppressing a separate question about the friend."""
     parts = [part.strip() for part in re.split(r'[?？.!\n]+', question) if part.strip()]
     return bool(parts) and all(
-        re.search(r'(?:^|\s)(?:나|난|나는|내|내가|전|저는|제가|제)(?:\s|$)', part)
+        FIRST_PERSON.search(part)
         and any(cue in part for cue in ('기억', '했지', '댔지', '였지', '봤', '뭐', '무슨'))
         for part in parts
     )
@@ -81,6 +88,17 @@ def private_recall_only(question):
 
 def relevant_memories(memories, question, today, *, asked_on=None):
     kind, when, past = memory_interest(question, asked_on or today)
+
+    # Match each question separately so asking about the friend does not open
+    # personal memories, even when another part of the turn is a personal recall.
+    topics = []
+    for part in re.split(r'[?？.!\n]+', question):
+        personal = bool(FIRST_PERSON.search(part))
+        if SECOND_PERSON.search(part) and not personal:
+            continue
+        recall = any(cue in part for cue in ('기억', '했지', '였지', '더라', '였나', '라고 했', '다고 했'))
+        part_kind, _, _ = memory_interest(part, asked_on or today)
+        topics.append((part, part_kind if personal or recall else None))
 
     def rank(memory):
         day = memory['days_from_now']
@@ -97,6 +115,9 @@ def relevant_memories(memories, question, today, *, asked_on=None):
 
     entries = []
     for memory in memories:
+        words = [w for w in memory['text'].split() if w not in ('선호', '비선호')]
+        if not any(k == memory['kind'] or any(w in part for w in words) for part, k in topics):
+            continue
         event_date = memory['event_date']
         event_date = date.fromisoformat(event_date) if isinstance(event_date, str) else event_date
         entries.append({
@@ -148,6 +169,7 @@ def context_for(plan, now, *, include_memories=True):
                 posts.append(source)
     local = timezone.localtime(max(now, plan.reply_at))
     slot = routine_at(person, local)
+    received_slot = routine_at(person, plan.trigger_message.created_at)
     authorized = (relevant_memories(memories, turns[0].text, local.date(),
                                     asked_on=timezone.localdate(turns[0].created_at)) if turns else [])
     return {
@@ -161,7 +183,7 @@ def context_for(plan, now, *, include_memories=True):
             'personality': persona.personality if persona else '',
             'taboos': persona.taboos if persona else '',
             'voice': persona.speech_rules if persona else '',
-            'examples': persona.example_dialogues if persona else '',
+            'examples': persona.example_dialogues.replace(' / ', '\n') if persona else '',
             'bubble_range': [1, min(persona.bubble_max, 6)] if persona else [1, 2],
         },
         'current_activity': {
@@ -170,6 +192,8 @@ def context_for(plan, now, *, include_memories=True):
         }
         if slot
         else None,
+        'woke_before_reply': bool(received_slot and received_slot.state == State.SLEEP
+                                  and (not slot or slot.state != State.SLEEP)),
         'quoted_post_id': quoted_id,
         'shared_events': [
             {
@@ -285,11 +309,17 @@ def openai_reply(context):
     id_schema = {'type': 'integer'}
     if allowed_ids:
         id_schema['enum'] = allowed_ids
+    instructions = INSTRUCTIONS
+    if context.get('woke_before_reply'):
+        instructions += ('\n너는 지금 잠에서 깬 뒤 지난 톡을 읽었다. 상대가 자러 간다고 했으면 지금 잘 잤는지 묻거나 '
+                         '그때 이미 자고 있었다고 짧게 말한다. 이 답장에서 “잘 자”, “푹 자”는 시각에 맞지 않는다.')
+    if not context.get('current_activity'):
+        instructions += '\n지금은 일정이 비어 있다. 근황을 물으면 그냥 쉬는 중이라고 네 말투로 답한다. 장소·알바·수업·이동을 지어내지 않는다.'
     payload = {
         'model': settings.LLM_MODEL,
         'store': False,
         'max_output_tokens': 1200,
-        'instructions': INSTRUCTIONS,
+        'instructions': instructions,
         'input': json.dumps(context, ensure_ascii=False),
         'text': {
             'format': {

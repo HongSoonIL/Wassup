@@ -79,13 +79,16 @@ def contexts_for(start, calendar, now):
     contexts = []
     for p in people:
         routines = routines_for(p, start)
-        history = FeedPost.objects.filter(
+        history = list(FeedPost.objects.filter(
             character=p,
             state=FeedPost.State.PUBLISHED,
             published_at__gte=history_start,
             published_at__lt=boundary,
             published_at__lte=now,
-        ).order_by('published_at', 'pk')
+        ).order_by('published_at', 'pk'))
+        assets = list(PostPhoto.objects.filter(character=p).order_by('pk').values('key', 'alt'))
+        previous_photos = {post.photo_id for post in history if post.published_at >= boundary - timedelta(weeks=1)}
+        fresh_assets = [asset for asset in assets if asset['key'] not in previous_photos]
         contexts.append(
             {
                 'week_start': start.isoformat(),
@@ -106,13 +109,14 @@ def contexts_for(start, calendar, now):
                     'examples': p.persona.example_dialogues,
                     'taboos': p.persona.taboos,
                 },
-                'assets': list(PostPhoto.objects.filter(character=p).order_by('pk').values('key', 'alt')),
+                'assets': fresh_assets or assets,
                 'recent_posts': [
                     {
                         'event_at': timezone.localtime(post.event_at).isoformat() if post.event_at else None,
                         'published_at': timezone.localtime(post.published_at).isoformat(),
                         'public_facts': post.public_facts,
                         'caption': post.caption,
+                        'asset_key': post.photo_id,
                         'photo_alt': post.photo_alt,
                     }
                     for post in history
@@ -162,6 +166,15 @@ def content_keys(caption, facts):
     return keys
 
 
+def mentions_photo_detail(description, scene):
+    # This is a conservative hint for automatic pairing. A synonym-only match
+    # can still be selected by an editor on the draft.
+    scene = normalized(scene)
+    placement_words = {'놓인', '놓여', '있는', '위에', '옆에', '앞에', '배경으로'}
+    return any(len(word) >= 2 and word not in placement_words and word in scene
+               for word in normalized(description).split())
+
+
 def bounded_text(value, limit, allow_empty=False):
     return (
         isinstance(value, str)
@@ -195,7 +208,7 @@ def candidates_for(context, output, now):
     if not isinstance(rows, list) or not 2 <= len(rows) <= 3:
         invalid('한 캐릭터에 후보 2~3개가 필요해요.')
     events = {e['id']: e for e in context['school_calendar']}
-    assets = {p['key'] for p in context['assets']}
+    assets = {p['key']: p['alt'] for p in context['assets']}
     seen = set()
     for past in context['recent_posts']:
         seen.update(content_keys(past['caption'], past['public_facts']))
@@ -257,11 +270,13 @@ def candidates_for(context, output, now):
             invalid('지난 글이나 이번 주 후보와 문구·사건·시각이 중복돼요.')
         seen.update(keys)
         times.update((('event', event), ('publish', publish)))
-        # Keep the first scene paired with a supplied photo. Later uses need an operator's choice.
-        if key in used_assets:
+        # Only reserve the asset for a scene that actually mentions a detail
+        # from its registered description. Models sometimes select the sole asset for an unrelated story.
+        if key is not None and (key in used_assets or not mentions_photo_detail(assets[key], ' '.join([caption, *facts]))):
             key, alt = None, ''
         elif key is not None:
             used_assets.add(key)
+            alt = assets[key]
         result.append(
             {
                 'character_id': owner,
