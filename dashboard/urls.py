@@ -1,11 +1,8 @@
-from django.contrib.auth.views import LoginView, LogoutView
 from django.urls import path
 
 from . import views
 
 urlpatterns = [
-    path('login/', LoginView.as_view(template_name='dashboard/login.html', next_page='/feed/')),
-    path('logout/', LogoutView.as_view(next_page='/login/')),
     path('studio/', views.studio_page),
     path('feed/', views.feed_page),
     path('api/ops/weeks/generate/', views.generate),

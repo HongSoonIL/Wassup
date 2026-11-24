@@ -29,7 +29,7 @@ python manage.py createsuperuser     # admin 로그인용
 ```bash
 source .venv/bin/activate            # 새 터미널마다
 docker compose up -d                 # Docker Desktop을 껐다 켰다면
-python manage.py runserver           # http://127.0.0.1:8000/admin/
+python manage.py runserver           # http://127.0.0.1:8000/
 python manage.py test                # 테스트
 ```
 
@@ -41,6 +41,8 @@ python manage.py test                # 테스트
 
 | Method | URL | 하는 일 | 성공 | 오류 |
 |---|---|---|---|---|
+| GET | `/api/characters/` | 친구 찾기 목록과 내 기존 방 번호 | 200 | 401 |
+| POST | `/api/friends/` | `{"character_id": 1}`로 친구 추가, 기존 방이 있으면 그 번호 반환 | 201, 200 | 400, 401, 403, 404 |
 | GET | `/api/friends/` | 친구 목록 (마지막 메시지, 안 읽은 수) | 200 | 401 |
 | POST | `/api/rooms/{id}/messages/` | 메시지 보내기 `{"text": "..."}` | 201 | 400, 401, 403, 404 |
 | GET | `/api/rooms/{id}/messages/?before=&limit=` | 이전 대화 불러오기 (기본 30개, 최대 100개) | 200 | 400, 401, 403, 404 |
@@ -62,9 +64,9 @@ await fetch(`/api/rooms/${roomId}/messages/`, {
 
 채팅과 피드는 Django 세션을 공유한다.
 
-1. 운영 계정으로 `/admin/`에 로그인한다.
-2. admin의 **친구 관계(채팅방)** 에서 내 계정과 도현을 친구로 추가한다.
-3. 해당 계정으로 `/login/`에 로그인한 브라우저에서 `/api/friends/`와 `/api/rooms/{id}/messages/`를 연다.
+1. 아래 실행 절차대로 화면을 빌드한 뒤 `/`를 열고 **가입하기**를 선택한다. 기존 계정은 같은 화면에서 로그인한다.
+2. `/discover/`에서 첫 친구를 추가하고 프로필의 **대화하기**를 누른다.
+3. 다시 `/`를 열면 친구 홈에서 마지막 대화와 안 읽은 답장을 확인할 수 있다. API로 확인하려면 `/api/friends/`의 `room_id`로 `/api/rooms/{id}/messages/`를 연다.
 
 ## 주간 승인과 실제 친구 피드
 
@@ -78,7 +80,7 @@ python manage.py seed_publication
 python manage.py runserver
 ```
 
-별도 터미널에서 `python manage.py run_publication_worker`를 실행한다. `--once`는 대기 중인 주간 생성과 시각이 된 발행을 한 차례 처리한다. 운영 계정은 superuser 또는 `world.publish_week` 권한이 있는 사용자다. 일반 계정은 Django admin에서 도현이나 서윤과 친구 관계를 맺은 뒤 피드를 확인한다.
+별도 터미널에서 `python manage.py run_publication_worker`를 실행한다. `--once`는 대기 중인 주간 생성과 시각이 된 발행을 한 차례 처리한다. 운영 계정은 superuser 또는 `world.publish_week` 권한이 있는 사용자다. 일반 계정은 친구 찾기에서 도현이나 서윤을 추가한 뒤 `/feed/`에서 해당 친구의 공개 소식을 확인한다.
 
 - **주간 계획.** 운영자가 월요일을 선택해 열면 워커가 가상 학교 달력으로 후보를 만든다. 실제 모델 모드는 계절, 학사 일정, 캐릭터별 일과와 등록 사진, 직전 4주간 공개한 글로 친구 한 명당 후보 2~3건을 제안한다. 같은 주차를 다시 열면 기존 편집본을 읽는다. 생성 실패 시 해당 주차에서 재시도한다. 시드는 2027년 4월 19일 주간의 중간고사와 체육대회를 포함한다. 다른 주의 행사는 admin의 School events에서 등록한다.
 - **운영 검토.** 같은 사진이 한 주에 여러 번 추천되면 첫 후보에만 붙인다. 사진 없는 후보에는 운영자가 사진을 선택하거나 그 주 발행에서 제외한 뒤 승인한다. 실제 시계 기준 과거 시각은 승인할 수 없다. 일정 변경 시 해당 행사를 참조하는 미발행 후보만 재검토하며, 실패한 사진은 자산 복구 후 같은 카드에서 재시도한다.

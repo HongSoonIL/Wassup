@@ -13,6 +13,7 @@ import json
 from functools import wraps
 
 from django.conf import settings
+from django.contrib.auth.decorators import login_required
 from django.db.models import Count, F, OuterRef, Q, Subquery
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -22,9 +23,9 @@ from django.views.decorators.http import require_GET, require_POST, require_http
 from .models import Friendship, Message, ReplyBubble, ReplyPlan
 from world.clock import routine_at, world_now
 from world.publication import published_posts
-from world.models import FeedPost
+from world.models import Character, FeedPost
 from .replies import accept_message
-from .serialization import iso, message_json, quote_json
+from .serialization import iso, message_json, public_character_json, quote_json
 
 MESSAGE_MAX_LENGTH = 1000
 PAGE_SIZE = 30
@@ -59,7 +60,7 @@ def get_own_room(request, room_id):
 
 
 @require_GET
-@login_required_json
+@login_required
 @ensure_csrf_cookie
 def chat_page(request, room_id):
     room = get_own_room(request, room_id)
@@ -78,7 +79,7 @@ def chat_page(request, room_id):
 
 
 @require_GET
-@login_required_json
+@login_required
 def from_post(request, post_id):
     post = get_object_or_404(FeedPost, pk=post_id, state='published', published_at__lte=world_now())
     room = get_object_or_404(Friendship, user=request.user, character_id=post.character_id)
@@ -88,8 +89,36 @@ def from_post(request, post_id):
 @require_GET
 @ensure_csrf_cookie
 @login_required_json
+def character_list(request):
+    my_room = Friendship.objects.filter(user=request.user, character_id=OuterRef('pk'))
+    characters = Character.objects.annotate(room_id=Subquery(my_room.values('pk')[:1]))
+    return json_response({
+        'characters': [{**public_character_json(c), 'room_id': c.room_id} for c in characters],
+    })
+
+
+def add_friend(request):
+    try:
+        body = json.loads(request.body)
+    except (ValueError, RecursionError):
+        return error(400, 'JSON 형식이 아니에요.')
+    character_id = body.get('character_id') if isinstance(body, dict) else None
+    if type(character_id) is not int or not 0 < character_id < 2**63:
+        return error(400, 'character_id는 양의 정수여야 해요.')
+    if not Character.objects.filter(pk=character_id).exists():
+        return error(404, '캐릭터를 찾을 수 없어요.')
+    room, created = Friendship.objects.get_or_create(user=request.user, character_id=character_id)
+    return json_response({'room_id': room.pk}, status=201 if created else 200)
+
+
+@require_http_methods(['GET', 'POST'])
+@ensure_csrf_cookie
+@login_required_json
 def friend_list(request):
-    """GET /api/friends/ — 친구 목록 (마지막 메시지, 안 읽은 수). 최근 대화한 방이 위로 온다."""
+    """POST로 친구를 추가하고, GET은 안 읽은 수와 마지막 메시지를 최근 대화 순으로 돌려준다."""
+    if request.method == 'POST':
+        return add_friend(request)
+
     last_message_id = Subquery(
         Message.objects.filter(room=OuterRef('pk')).order_by('-id').values('id')[:1]
     )
@@ -109,16 +138,10 @@ def friend_list(request):
 
     friends = []
     for room in rooms:
-        c = room.character
         last = last_messages.get(room.last_message_id)
         friends.append({
             'room_id': room.id,
-            'character': {
-                'id': c.id,
-                'name': c.name,
-                'status_message': c.status_message,
-                'profile_image': c.profile_image.url if c.profile_image else None,
-            },
+            'character': public_character_json(room.character),
             'last_message': message_json(last) if last else None,
             'unread_count': room.unread_count,
         })

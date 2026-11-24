@@ -7,8 +7,8 @@ import { subscribeToRoom } from './live'
 import { sampleFriend, sampleMessages } from './preview'
 import Publication from './Publication'
 import FriendMemory from './FriendMemory'
-import seoyunPortrait from './design/assets/seoyun.webp'
-import dohyunPortrait from './assets/dohyun.webp'
+import FriendPortrait from './FriendPortrait'
+import FriendsPage from './FriendsPage'
 import './style.css'
 
 const root = document.getElementById('root')!
@@ -19,13 +19,8 @@ const calendar = new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: 'lon
 const day = (message: Message) => calendar.format(new Date(message.created_at))
 const hour = (message: Message) => clock.format(new Date(message.created_at))
 
-const portraits: Record<string, string> = { 서윤: seoyunPortrait, 도현: dohyunPortrait }
-
 function Avatar({ friend }: { friend?: Friend }) {
-  const source = friend && (friend.character.profile_image || portraits[friend.character.name])
-  return source
-    ? <img className="avatar" src={source} alt="" />
-    : <span className="avatar initials" aria-hidden="true">{friend?.character.name[0] || '·'}</span>
+  return <FriendPortrait person={friend?.character}/>
 }
 
 function Brand() {
@@ -324,7 +319,7 @@ function Chat() {
 
   return <main className={'shell ' + (listOpen ? 'show-list' : '')}>
     <aside className="side" aria-label="대화 목록">
-      <Brand/>
+      {demo ? <Brand/> : <a href="/home/" aria-label="친구 홈"><Brand/></a>}
       <div className="side-heading"><h2>대화</h2><span>{friends.length}</span>{!demo && <a href="/feed/">친구 피드 ↗</a>}</div>
       <nav>{rows}</nav>
       {latestPhoto && <section className="side-photo"><h3>대화 속 사진</h3><button onClick={() => showPhoto(latestPhoto)}><img src={latestPhoto} alt="대화에서 받은 사진"/><ZoomIn size={17}/></button></section>}
@@ -391,4 +386,9 @@ function Chat() {
     </dialog>
   </main>
 }
-createRoot(root).render(root.dataset.publication ? <Publication studio={root.dataset.publication === 'studio'} canPublish={root.dataset.canPublish === 'true'}/> : <Chat/>)
+const page = root.dataset.friendsPage
+createRoot(root).render(page
+  ? <FriendsPage page={page} characterId={Number(root.dataset.characterId)} />
+  : root.dataset.publication
+    ? <Publication studio={root.dataset.publication === 'studio'} canPublish={root.dataset.canPublish === 'true'}/>
+    : <Chat/>)

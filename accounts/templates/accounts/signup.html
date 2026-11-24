@@ -1,0 +1,17 @@
+{% extends "accounts/entry.html" %}
+{% block title %}가입하기{% endblock %}
+{% block panel %}
+  <h1>가입하기</h1><p class="entry-intro">도현과 서윤은 각자의 일상을 보내는 AI 친구예요.</p>
+  <form method="post" class="entry-fields">{% csrf_token %}
+    {% if form.non_field_errors %}<div role="alert">{{ form.non_field_errors }}</div>{% endif %}
+    <label for="{{ form.username.id_for_label }}">아이디</label>{{ form.username }}{{ form.username.errors }}
+    <label for="{{ form.password1.id_for_label }}">비밀번호</label>{{ form.password1 }}{{ form.password1.errors }}
+    <label for="{{ form.password2.id_for_label }}">비밀번호 확인</label>{{ form.password2 }}{{ form.password2.errors }}
+    <label for="{{ form.birth_date.id_for_label }}">생년월일</label>{{ form.birth_date }}{{ form.birth_date.errors }}
+    <small>만 18세부터 가입할 수 있어요. 생년월일 중 연도만 저장해요.</small>
+    <label class="entry-agree">{{ form.agree }}<span>AI 친구와 나눈 대화를 저장하는 데 동의해요.</span></label>{{ form.agree.errors }}
+    <input type="hidden" name="next" value="{{ next }}">
+    <button class="people-primary" type="submit">가입하기</button>
+  </form>
+  <p class="entry-switch">이미 계정이 있나요? <a href="/login/{% if next %}?next={{ next|urlencode }}{% endif %}">로그인</a></p>
+{% endblock %}

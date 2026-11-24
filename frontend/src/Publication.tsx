@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { CalendarDays, Check, HeartHandshake, RefreshCw } from 'lucide-react'
 import './publication.css'
+import { returnToLogin } from './chat'
 
 type PublicPost = {
   id: number
   name: string
+  character_id: number
   caption: string
   published_at: string
   photo: { url: string; alt: string; ai_generated: boolean }
@@ -73,6 +75,7 @@ async function request<T>(path: string, method = 'GET', fields?: object): Promis
     headers: fields ? { 'Content-Type': 'application/json', 'X-CSRFToken': token } : undefined,
     body: fields ? JSON.stringify(fields) : undefined,
   })
+  if (response.status === 401) returnToLogin()
   const data = await response.json().catch(() => null)
   if (!response.ok)
     throw new Error(data?.detail || '요청을 처리할 수 없어요. 다시 로그인하거나 새로고침해 주세요.')
@@ -124,6 +127,7 @@ function Feed() {
         <div className="pub-empty">
           <HeartHandshake size={28} />
           <p>친구가 올린 소식이 여기에 보여요.</p>
+          <a className="pub-talk" href="/">친구 만나기 ↗</a>
         </div>
       )}
       <div className="pub-grid">
@@ -133,7 +137,7 @@ function Feed() {
               <img src={p.photo.url} alt={p.photo.alt} />
             </a>
             <div className="pub-info">
-              <strong>{p.name}</strong>
+              <a href={`/people/${p.character_id}/`}><strong>{p.name}</strong></a>
               <time>{stamp.format(new Date(p.published_at))}</time>
               <p>{p.caption}</p>
               <a className="pub-talk" href={`/chat/from-post/${p.id}/`}>{p.name}에게 말 걸기 ↗</a>
@@ -472,10 +476,11 @@ export default function Publication({ studio, canPublish }: { studio: boolean; c
   return (
     <div className="pub">
       <header>
-        <a href="/feed/">
+        <a href="/" aria-label="wassup 홈">
           wassup<span>.</span>
         </a>
         <nav>
+          <a href="/home/">친구 홈</a>
           {canPublish && !studio && <a href="/studio/">주간 발행</a>}
           <form method="post" action="/logout/">
             <input type="hidden" name="csrfmiddlewaretoken" value={csrf} />

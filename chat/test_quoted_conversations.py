@@ -62,6 +62,23 @@ class QuotedConversationTests(TestCase):
                 self.assertEqual(response.context['initial_quote']['caption'], self.post.caption)
         self.assertFalse(Message.objects.exists())
 
+    def test_post_link_returns_through_login_and_checks_visibility(self):
+        url = f'/chat/from-post/{self.post.pk}/'
+        self.assertRedirects(self.client.get(url), '/login/?next=' + url)
+        self.owner.set_password('owner-pw')
+        self.owner.save(update_fields=['password'])
+        response = self.client.post(
+            '/login/', {'username': self.owner.username, 'password': 'owner-pw', 'next': url}, follow=True,
+        )
+        self.assertEqual(response.redirect_chain, [
+            (url, 302), (f'/chat/{self.room.pk}/?source_post={self.post.pk}', 302),
+        ])
+        self.assertEqual(response.context['initial_quote']['id'], self.post.pk)
+        self.assertEqual(self.client.get(f'/chat/from-post/{self.draft.pk}/').status_code, 404)
+        self.client.force_login(get_user_model().objects.create_user('stranger'))
+        self.assertEqual(self.client.get(url).status_code, 404)
+        self.assertFalse(Message.objects.exists())
+
     def test_invalid_invisible_or_foreign_quote_never_creates_a_plan(self):
         self.client.force_login(self.owner)
         for room, source, status in [

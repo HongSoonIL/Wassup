@@ -7,6 +7,15 @@ def iso(dt, *, timespec='seconds'):
     return timezone.localtime(dt).isoformat(timespec=timespec) if dt else None
 
 
+def public_character_json(character):
+    return {
+        'id': character.pk,
+        'name': character.name,
+        'status_message': character.status_message,
+        'profile_image': character.profile_image.url if character.profile_image else None,
+    }
+
+
 def quote_json(post):
     return {
         'id': post.id,

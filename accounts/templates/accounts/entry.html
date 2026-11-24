@@ -1,0 +1,11 @@
+{% load static %}<!doctype html>
+<html lang="ko"><head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}{% endblock %} · wassup</title>
+  <link rel="stylesheet" href="{% static 'assets/chat.css' %}">
+</head><body class="entry">
+  <main class="entry-shell">
+    <div class="entry-photo"><a class="people-logo" href="/" aria-label="wassup 홈">wassup<span>.</span></a></div>
+    <section class="entry-panel">{% block panel %}{% endblock %}</section>
+  </main>
+</body></html>

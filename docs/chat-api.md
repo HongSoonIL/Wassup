@@ -2,10 +2,12 @@
 
 ## 현재 Django API
 
-개발용 계정으로 `/admin/`에 로그인하고, admin에서 그 계정과 캐릭터의 친구 관계를 만든다. 같은 브라우저에서 `GET /api/friends/`를 열어 `friends[].room_id`를 확인한다. 이 값이 채팅방 번호다. 채팅방 헤더에는 같은 항목의 `character.name`, `status_message`, `profile_image`를 사용한다. 프로필 이미지와 마지막 메시지는 `null`일 수 있다.
+`/signup/`에서 가입하거나 `/login/`에서 로그인한 뒤 `/discover/`에서 친구를 추가한다. 같은 브라우저에서 `GET /api/friends/`를 열어 `friends[].room_id`를 확인한다. 이 값이 채팅방 번호다. 채팅방 헤더에는 같은 항목의 `character.name`, `status_message`, `profile_image`를 사용한다. 프로필 이미지와 마지막 메시지는 `null`일 수 있다.
 
 | 요청 | 성공 응답과 화면 동작 |
 |---|---|
+| `GET /api/characters/` | 공개 프로필 목록 `characters`를 반환한다. 각 항목의 `room_id`는 이미 추가한 친구의 방 번호이며, 추가 전에는 `null`이다. |
+| `POST /api/friends/` | `{"character_id":1}`를 보내면 `{"room_id":3}` 형식으로 방 번호를 반환한다. 새 방은 `201`, 이미 친구면 `200`이다. |
 | `GET /api/rooms/{room_id}/messages/` | `200`. `{"messages": [], "has_more": false}` 형식. 기본 30개를 오래된 순서로 표시한다. 이전 페이지는 가장 작은 메시지 ID를 `before`에 넣어 요청한다. |
 | `POST /api/rooms/{room_id}/messages/` | `{"text":"뭐해?"}`를 보내면 `201`과 `{"id":41,"status":"sent","created_at":"2026-11-26T18:40:00+09:00"}`가 돌아온다. 보낸 본문과 반환된 ID로 내 말풍선을 표시한다. |
 | `POST /api/rooms/{room_id}/read/` | 사용자가 열린 방에서 본 상대 말풍선의 ID를 `{"through_id":42}`로 보낸다. 서버가 그 ID까지 받은 말풍선을 읽음 처리하고 남은 `unread_count`를 돌려준다. |
@@ -60,7 +62,7 @@ pnpm dev
 
 미리보기는 샘플 대화를 메모리에 표시한다. 전송하면 읽음·입력 중·고정 답장 순서를 재생하고, 새로고침하면 예시로 돌아간다. 캐릭터와 카페 이미지는 팀 기획서에 수록된 가상 인물·장면을 사용했다.
 
-Django에서 실제 기록을 사용하려면 같은 frontend 디렉터리에서 `pnpm build`를 실행한다. 프로젝트 루트로 돌아와 README의 DB 초기 설정, 시드, admin 로그인을 완료하고 `python manage.py runserver`로 실행한다. 친구 관계를 만든 계정으로 `/chat/{room_id}/`에 접속한다. 서버에 연결된 화면은 워커가 저장한 메시지를 WebSocket과 REST로 받아 표시한다. 탭에 복귀하거나 연결을 복구할 때 REST로 최신 기록을 확인한다.
+Django에서 실제 기록을 사용하려면 같은 frontend 디렉터리에서 `pnpm build`를 실행한다. 프로젝트 루트로 돌아와 README의 DB 초기 설정과 시드를 완료하고 `python manage.py runserver`로 실행한다. `/`에서 가입하고 친구를 추가한 뒤 프로필의 **대화하기**를 눌러 방에 들어간다. 서버에 연결된 화면은 워커가 저장한 메시지를 WebSocket과 REST로 받아 표시한다. 탭에 복귀하거나 연결을 복구할 때 REST로 최신 기록을 확인한다.
 
 ## 예약 발송 통합 실행
 

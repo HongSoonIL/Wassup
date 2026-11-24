@@ -1,5 +1,9 @@
 export type Quote = { status: 'available'; id: number; version: number; caption: string; photo_url: string; photo_alt: string } | { status: 'unavailable' }
-export type Profile = { name: string; status_message: string; current_activity: string | null; posts: {id: number; caption: string; photo: {url:string; alt:string}}[] }
+export type Profile = {
+  id: number; room_id: number; name: string; profile_image: string | null
+  status_message: string; current_activity: string | null; next_cursor: string | null
+  posts: {id: number; caption: string; published_at: string; photo: {url:string; alt:string; ai_generated:boolean}}[]
+}
 
 export type Message = {
   id: number
@@ -20,8 +24,14 @@ export type Friend = {
 }
 export type History = { messages: Message[]; has_more: boolean; typing_until?: string | null; current_activity?: string | null }
 
+export function returnToLogin() {
+  const next = window.location.pathname + window.location.search
+  window.location.replace('/login/?next=' + encodeURIComponent(next))
+}
+
 export async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, { cache: 'no-store', ...init })
+  if (res.status === 401) returnToLogin()
   if (!res.ok) {
     const body = await res.json().catch(() => null)
     throw new Error(body?.detail || '연결을 확인하고 다시 시도해 주세요.')
@@ -38,8 +48,8 @@ export function getMessages(room: number, before?: number) {
   return request<History>('/api/rooms/' + room + '/messages/' + query)
 }
 
-export function getProfile(characterId: number) {
-  return request<Profile>('/api/characters/' + characterId + '/profile/')
+export function getProfile(characterId: number, cursor?: string) {
+  return request<Profile>('/api/characters/' + characterId + '/profile/' + (cursor ? '?cursor=' + encodeURIComponent(cursor) : ''))
 }
 
 export function markRead(room: number, through: number) {

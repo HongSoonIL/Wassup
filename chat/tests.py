@@ -38,8 +38,17 @@ class ChatPageTests(ChatAPITestBase):
         self.assertContains(response, '/static/assets/chat.css')
         self.assertIn('csrftoken', response.cookies)
 
-    def test_room_access_matches_chat_api(self):
-        self.assertEqual(self.client.get(reverse('chat-page', args=[self.room.id])).status_code, 401)
+    def test_chat_navigation_returns_through_login_with_query(self):
+        url = reverse('chat-page', args=[self.room.pk]) + '?source_post=12'
+        form = self.client.get(url, follow=True)
+        self.assertTemplateUsed(form, 'dashboard/login.html')
+        self.assertEqual(form.context['next'], url)
+        response = self.client.post('/login/', {
+            'username': self.jisu.username, 'password': 'pw-12345!', 'next': form.context['next'],
+        })
+        self.assertRedirects(response, url)
+
+    def test_room_access_remains_owner_only(self):
         self.client.force_login(self.jisu)
         self.assertEqual(self.client.get(reverse('chat-page', args=[self.other_room.id])).status_code, 403)
         self.assertEqual(self.client.get(reverse('chat-page', args=[999999])).status_code, 404)

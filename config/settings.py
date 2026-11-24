@@ -55,6 +55,7 @@ INSTALLED_APPS = [
 
 # 커스텀 User — 첫 migrate 전에 정해야 한다 (설계서 2.4절)
 AUTH_USER_MODEL = 'accounts.User'
+LOGIN_URL = '/login/'
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',

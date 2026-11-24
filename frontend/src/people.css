@@ -1,0 +1,92 @@
+.people,.entry { color:#232920; background:#f5f6f0; min-height:100dvh }
+.people-logo { font:1000 39px/.95 "Arial Rounded MT Bold","Arial Black",Arial,sans-serif; letter-spacing:-4px; text-decoration:none }
+.people-logo span { color:#719624 }
+.people-primary,.people-secondary { display:inline-flex; justify-content:center; align-items:center; gap:8px; padding:11px 17px; border-radius:13px; font-size:14px; font-weight:750; text-decoration:none; line-height:1.35; min-height:44px }
+.people-primary { color:#253017; background:#d4f462 }
+.people-primary:hover { background:#c9e953 }
+.people-secondary { color:#313a28; border:1px solid #d4d9cb; background:#fff }
+.people-secondary:hover { background:#f2f5eb }
+.people-primary:disabled,.people-secondary:disabled { opacity:.65 }
+.people :focus-visible,.entry :focus-visible { outline:3px solid #68861e; outline-offset:3px }
+
+.entry { display:grid; align-content:center; padding:36px 24px }
+.entry-shell { display:grid; grid-template-columns:minmax(0,.94fr) minmax(0,1fr); width:min(960px,100%); margin:auto; background:white; border:1px solid #dbe0d4; border-radius:28px; overflow:hidden; box-shadow:0 8px 36px #34451c0a }
+.entry-photo { min-height:550px; padding:34px; background-color:#59604d; background-image:linear-gradient(165deg,#161d1578,transparent 65%),url('./design/assets/cafe-interior.webp'); background-position:center; background-size:cover }
+.entry-photo .people-logo { color:white; font-size:46px }
+.entry-photo .people-logo span { color:#d4f462 }
+.entry-panel { padding:36px clamp(24px,4.4vw,62px); align-self:center }
+.entry-panel h1,.people-main h1 { font-size:clamp(30px,4.2vw,47px); font-weight:800; letter-spacing:-.075em; line-height:1.18 }
+.entry-intro { font-size:14px; color:#59634f; margin-top:12px; line-height:1.6; word-break:keep-all }
+.entry-fields { display:grid; gap:6px; margin-top:22px }
+.entry-fields label { font-size:13px; font-weight:750; margin-top:7px }
+.entry-fields input:not([type=checkbox]):not([type=hidden]) { border:1px solid #c9d1c2; border-radius:10px; padding:10px 12px; font-size:16px; line-height:1.4; min-height:43px; min-width:0; width:100%; color:inherit; background:white }
+.entry-fields small { color:#616b59; font-size:12px }
+.entry-fields .entry-agree { display:flex; align-items:center; gap:9px; margin:10px 0 3px; font-weight:550; line-height:1.55 }
+.entry-agree input { width:17px; height:17px; accent-color:#54741b; flex-shrink:0 }
+.entry-fields .people-primary { margin-top:10px }
+.entry-error,.entry-fields .errorlist,.people-alert { color:#912f22; font-size:14px }
+.entry-switch { margin-top:23px; text-align:center; color:#616855; font-size:13px }
+.entry-switch a,.people-alert button { margin-left:5px; color:#34462a; text-decoration:underline; text-underline-offset:3px; font-weight:700 }
+
+.people-header { background:#fff; border-bottom:1px solid #dce0d4 }
+.people-header>div { max-width:1060px; margin:auto; min-height:75px; padding:15px 28px; display:flex; align-items:center; justify-content:space-between; gap:15px }
+.people-header nav { display:flex; align-items:center; gap:clamp(10px,3vw,25px); font-size:14px; font-weight:650 }
+.people-header nav [aria-current] { text-decoration:underline; text-decoration-color:#94af5b; text-underline-offset:6px }
+.people-header nav button { border:1px solid #d4d9c9; border-radius:10px; padding:6px 11px }
+.people-main { margin:auto; max-width:1016px; padding:clamp(36px,6vw,74px) 26px 70px }
+.people-main>h1,.people-heading { margin:0 0 26px }
+.people-heading { display:flex; align-items:center; justify-content:space-between; gap:16px }
+.people-note,.people-alert { margin:12px 0 }
+.people-empty { background:#fff; border:1px solid #d9dfd1; border-radius:20px; padding:30px 24px; color:#606c56; line-height:1.65 }
+.people-empty svg { display:inline-block }
+.people-empty a { display:inline-flex; align-items:center; gap:5px; margin-top:10px; font-weight:700; color:#405624 }
+.discovery-grid,.people-album { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr)); gap:22px }
+.discovery-card,.people-album>a,.people-profile,.conversation-list { border:1px solid #d8dece; border-radius:22px; overflow:hidden; background:#fff }
+.discovery-photo { display:block; width:100%; height:clamp(220px,28vw,330px); object-fit:cover; object-position:50% 36%; background:#d7dfcb }
+.discovery-foot { padding:20px 23px 22px }
+.person-title { display:flex; align-items:center; gap:9px }
+.person-title h2 { font-size:25px; font-weight:800; letter-spacing:-1.2px }
+.person-title span { border-radius:6px; background:#edf2e5; color:#4f5f40; font-size:11px; font-weight:700; padding:3px 7px }
+.discovery-foot>p,.people-profile p { color:#535f49; margin:6px 0 17px }
+.discovery-foot .people-primary,.discovery-foot .people-secondary { width:100% }
+.conversation-list { margin:0; padding:0 22px }
+.conversation-list li { display:flex; align-items:center; gap:15px; border-bottom:1px solid #e6e9e1; min-width:0; padding:16px 0 }
+.conversation-list li:last-child { border:0 }
+.conversation-list .avatar { width:54px; height:54px }
+.conversation-link { display:flex; align-items:center; gap:12px; min-width:0; flex:1; min-height:54px }
+.conversation-link>svg { color:#7e8973; flex-shrink:0 }
+.conversation-copy { display:grid; flex:1; min-width:0; gap:4px }
+.conversation-copy b { font-size:17px }.conversation-copy small { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:14px; color:#5a6550 }
+.conversation-meta { display:grid; justify-items:end; gap:4px; font-size:12px; color:#606a56 }
+.conversation-meta strong { background:#d6f56a; border-radius:20px; padding:1px 7px; color:#344321 }
+.people-profile { padding:clamp(24px,4vw,40px); display:flex; align-items:center; gap:20px }
+.profile-face { width:98px; height:98px; border-radius:32%; object-fit:cover; object-position:50% 36% }
+.people-profile h1 { font-size:34px }.people-profile p { margin:5px 0 }
+.people-profile>.people-primary { margin-left:auto }
+.people-activity { font-size:12px; color:#566842 }.people-activity:before { content:''; display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:6px; background:#829b48 }
+.people-subhead { font-size:23px; letter-spacing:-1px; font-weight:800; margin:34px 0 14px }
+.people-album { grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr)); margin-bottom:16px }
+.people-album img { display:block; width:100%; aspect-ratio:4/3; object-fit:cover }
+.people-album a>div { padding:15px }.people-album small { font-size:12px; color:#637056 }
+.people-album p { margin:5px 0 9px; overflow-wrap:anywhere }.people-album span { display:inline-flex; align-items:center; gap:4px; font-size:13px; color:#3e5427; font-weight:700 }
+@media(max-width:650px) {
+  .entry { padding:0; background:white; align-content:start }
+  .entry-shell { border:0; border-radius:0; display:block; box-shadow:none }
+  .entry-photo { min-height:0; height:clamp(110px,21dvh,170px); background-position:50% 47%; padding:19px 22px }
+  .entry-photo .people-logo { font-size:34px }
+  .entry-panel { padding:25px 22px max(28px,env(safe-area-inset-bottom)) }
+  .people-header>div { min-height:60px; padding:12px 16px }
+  .people-header .people-logo { font-size:29px; letter-spacing:-3px }
+  .people-header nav { font-size:12px }.people-header nav button { padding:5px 8px }
+  .people-main { padding:32px 16px 55px }
+  .discovery-grid { grid-template-columns:1fr; gap:14px }
+  .discovery-card { display:grid; grid-template-columns:41% 1fr; align-items:stretch }
+  .discovery-photo { height:100%; min-height:167px }
+  .discovery-foot { display:flex; flex-direction:column; padding:15px }
+  .discovery-foot>p { flex:1; margin-top:4px; font-size:13px }
+  .discovery-foot .people-primary,.discovery-foot .people-secondary { min-height:40px; padding:8px }
+  .people-profile { display:grid; grid-template-columns:auto 1fr; gap:15px; padding:20px }
+  .profile-face { width:70px; height:70px }.people-profile h1 { font-size:27px }
+  .people-profile>.people-primary { grid-column:1/-1; margin:0 }
+  .conversation-list { padding:0 14px }.conversation-list li { gap:10px }.conversation-link { gap:6px }
+}
