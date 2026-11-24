@@ -9,7 +9,12 @@
 
 .entry { display:grid; align-content:center; padding:36px 24px }
 .entry-shell { display:grid; grid-template-columns:minmax(0,.94fr) minmax(0,1fr); width:min(960px,100%); margin:auto; background:white; border:1px solid #dbe0d4; border-radius:28px; overflow:hidden; box-shadow:0 8px 36px #34451c0a }
-.entry-photo { min-height:550px; padding:34px; background-color:#59604d; background-image:linear-gradient(165deg,#161d1578,transparent 65%),url('./assets/cafe.webp'); background-position:center; background-size:cover }
+.entry-photo {
+  --entry-image: url('./assets/entry-cafe.webp');
+  min-height:550px; padding:34px; background-color:#59604d;
+  background-image:linear-gradient(165deg,#161d153d,transparent 58%),var(--entry-image);
+  background-position:center; background-size:cover;
+}
 .entry-photo .people-logo { color:white; font-size:46px }
 .entry-photo .people-logo span { color:#d4f462 }
 .entry-panel { padding:36px clamp(24px,4.4vw,62px); align-self:center }
@@ -80,7 +85,7 @@
 @media(max-width:650px) {
   .entry { padding:0; background:white; align-content:start }
   .entry-shell { border:0; border-radius:0; display:block; box-shadow:none }
-  .entry-photo { min-height:0; height:clamp(110px,21dvh,170px); background-position:50% 47%; padding:19px 22px }
+  .entry-photo { --entry-image:url('./assets/entry-cafe-banner.webp'); min-height:0; height:clamp(110px,21dvh,170px); padding:19px 22px }
   .entry-photo .people-logo { font-size:34px }
   .entry-panel { padding:25px 22px max(28px,env(safe-area-inset-bottom)) }
 

@@ -63,6 +63,7 @@ POST_TOPIC_FOLLOWUP = re.compile(
 PUBLIC_POST_REFERENCE = re.compile(
     r'피드|게시물|올린\s*(?:글|사진)|올렸던\s*(?:글|사진)|\b(?:post|feed)\b', re.IGNORECASE,
 )
+POST_OUTCOME = re.compile(r'결국|그\s*(?:뒤|이후)|어떻게\s*(?:됐|되었)|마무리|끝났|(?:았|었|했)(?:어|니)\s*[?？]?\s*$')
 
 
 def post_topic_words(text):

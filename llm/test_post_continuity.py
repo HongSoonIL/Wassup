@@ -102,6 +102,36 @@ class PostContinuityTests(TestCase):
         context = context_for(self.plan('그래서 결국 어떻게 됐어?', room=self.peer), NOW)
         self.assertNotIn('post_continuity', context)
 
+    def test_next_day_outcome_uses_the_quoted_edition_and_its_published_update(self):
+        blanket = self.post('담요 빨래', '두부가 잠들어서 담요 빨래를 내일로 미뤘다.', days=3)
+        drying = self.post('건조대가 꽉 참', '손빨래한 담요를 널었다.', days=2, previous=blanket)
+        self.message('얘가 두부야?', at=NOW - timedelta(days=3), source=blanket)
+
+        def ask():
+            return context_for(self.plan('그래서 담요는 빨았어?'), NOW)
+
+        FeedPost.objects.filter(pk=drying.pk).update(state='scheduled')
+        before = ask()
+        self.assertEqual(before['quoted_post_id'], blanket.pk)
+        self.assertNotIn('post_continuity', before)
+        self.assertNotIn('손빨래한 담요', str(before))
+        self.assertNotIn('얘가 두부야?', str(before))
+        FeedPost.objects.filter(pk=drying.pk).update(state='published')
+        after = ask()
+        self.assertEqual(after['quoted_post_id'], blanket.pk)
+        self.assertEqual(after['post_continuity']['post_id'], drying.pk)
+        self.assertEqual(after['post_continuity']['previous']['id'], blanket.pk)
+        self.assertIn(drying.pk, [p['id'] for p in after['shared_events']])
+        self.assertNotIn('post_continuity', context_for(self.plan('담요 사진 언제 찍었어?'), NOW))
+        self.assertNotIn('post_continuity', context_for(self.plan('지금은 뭐 해?'), NOW))
+        self.assertNotIn('post_continuity', context_for(self.plan('그래서 담요는 빨았어?', room=self.peer), NOW))
+
+        FeedPost.objects.filter(pk=drying.pk).update(previous_version=blanket.version + 1)
+        self.assertNotIn('post_continuity', ask())
+        self.post('다른 담요 이야기', '담요를 하나 더 꺼냈다.', days=2, hours=1, previous=blanket)
+        FeedPost.objects.filter(pk=drying.pk).update(previous_version=blanket.version)
+        self.assertNotIn('post_continuity', ask())
+
     def test_elliptical_followup_requires_an_unbroken_recent_topic(self):
         self.message('무슨 색 골랐어?', at=NOW - timedelta(days=3), source=self.current)
         self.assert_continuity(context_for(self.plan('그래서 결국 어떻게 됐어?'), NOW))
