@@ -1,17 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
-import { CalendarDays, Check, HeartHandshake, Image as ImageIcon, RefreshCw } from 'lucide-react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { MouseEvent } from 'react'
+import { ArrowUpRight, CalendarDays, Check, ChevronDown, HeartHandshake, Image as ImageIcon, MessageCircle, RefreshCw, X } from 'lucide-react'
 import './publication.css'
-import { returnToLogin } from './chat'
+import { getProfile, returnToLogin } from './chat'
+import type { Friend, Profile } from './chat'
+import { discover, getFeed, PeopleHeader, PersonProfile } from './FriendsPage'
+import type { FeedPage } from './FriendsPage'
+import { FriendIdentity, PostPhoto } from './SocialMedia'
+import { isPlainClick } from './ProfileBody'
 
-type PublicPost = {
-  id: number
-  name: string
-  character_id: number
-  caption: string
-  published_at: string
-  photo: { url: string; alt: string; ai_generated: boolean }
-}
-type FeedPage = { posts: PublicPost[]; next_cursor: string | null }
 type PhotoState = 'idle' | 'queued' | 'generating' | 'ready' | 'failed'
 type Candidate = {
   post_id: number
@@ -103,78 +100,200 @@ async function request<T>(path: string, method = 'GET', fields?: object): Promis
   return data
 }
 
+type OpenProfile = { characterId: number; postId: number; authorTop: number }
+function profileRoute(): OpenProfile | null {
+  return history.state?.wsFeedProfile || null
+}
+function linkedPost() {
+  const match = /^#post-(\d+)$/.exec(location.hash)
+  return match ? Number(match[1]) : null
+}
+
+function FeedProfileDialog({ route, load, openPost }: {
+  route: OpenProfile
+  load: (id: number) => Promise<Profile>
+  openPost: (id: number) => void
+}) {
+  const dialog = useRef<HTMLDialogElement>(null)
+  const closing = useRef(false)
+  const leavingForPost = useRef(false)
+  useLayoutEffect(() => {
+    const el = dialog.current!
+    const author = document.getElementById('feed-author-'+route.postId)
+    el.showModal()
+    return () => {
+      el.close()
+      // The browser can focus a URL fragment after popstate has already run.
+      requestAnimationFrame(() => {
+        if (leavingForPost.current || profileRoute() || !author?.isConnected) return
+        author.focus({ preventScroll: true })
+        window.scrollBy(0, author.getBoundingClientRect().top - route.authorTop)
+      })
+    }
+  }, [route.postId, route.authorTop])
+  function close() {
+    if (closing.current) return
+    closing.current = true
+    history.back()
+  }
+  function followPost(event: MouseEvent<HTMLDialogElement>) {
+    if (event.target === event.currentTarget) { close(); return }
+    if (!isPlainClick(event) || !(event.target instanceof Element)) return
+    const link = event.target.closest<HTMLAnchorElement>('a[href^="/feed/#post-"]')
+    if (!link) return
+    event.preventDefault()
+    leavingForPost.current = true
+    openPost(Number(link.hash.slice(6)))
+  }
+  return <dialog className="feed-profile-dialog" aria-label="친구 프로필" ref={dialog}
+    onCancel={event => { event.preventDefault(); close() }} onClick={followPost}>
+    <div className="feed-profile-panel">
+      <div className="feed-profile-bar"><b>친구 프로필</b>
+        <button type="button" className="feed-profile-close" aria-label="프로필 닫기" onClick={close} autoFocus><X size={19}/></button>
+      </div>
+      <PersonProfile key={route.characterId} characterId={route.characterId} load={load}/>
+    </div>
+  </dialog>
+}
+
 function Feed() {
   const [page, setPage] = useState<FeedPage | null>(null)
+  const [people, setPeople] = useState<Map<number, Friend['character']>>(new Map())
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [route, setRoute] = useState(profileRoute)
+  const savedPosition = useRef<OpenProfile | null>(history.state?.wsFeedReturn || null)
+  const [target, setTarget] = useState(() => savedPosition.current?.postId || linkedPost())
+  const [unavailable, setUnavailable] = useState(false)
+  const profiles = useRef(new Map<number, Promise<Profile>>())
   const sequence = useRef(0)
-  async function load(cursor?: string) {
+  const loadedOlder = useRef(false)
+  const loading = useRef(false)
+  const retryCursor = useRef<string | undefined>(undefined)
+
+  const loadProfile = useCallback((id: number) => {
+    const cached = profiles.current.get(id)
+    if (cached) return cached
+    const pending = getProfile(id).catch(error => { profiles.current.delete(id); throw error })
+    profiles.current.set(id, pending)
+    return pending
+  }, [])
+
+  const load = useCallback(async (cursor?: string) => {
+    if (loading.current) return
+    loading.current = true
     const current = ++sequence.current
     setBusy(true)
     setError('')
+    retryCursor.current = cursor
     try {
-      const data = await request<FeedPage>(
-        '/api/feed/' + (cursor ? '?cursor=' + encodeURIComponent(cursor) : ''),
-      )
-      if (sequence.current === current)
-        setPage((prev) => (cursor && prev ? { ...data, posts: [...prev.posts, ...data.posts] } : data))
+      const data = await getFeed(cursor)
+      if (sequence.current === current) {
+        loadedOlder.current = !!cursor
+        if (!cursor) profiles.current.clear()
+        setPage(prev => cursor && prev ? { ...data, posts: [...prev.posts, ...data.posts] } : data)
+      }
     } catch (e) {
       if (sequence.current === current) setError(reason(e))
     } finally {
-      if (sequence.current === current) setBusy(false)
-    }
-  }
-  useEffect(() => {
-    const refresh = () => {
-      if (!document.hidden) void load()
-    }
-    refresh()
-    document.addEventListener('visibilitychange', refresh)
-    return () => {
-      sequence.current++
-      document.removeEventListener('visibilitychange', refresh)
+      if (sequence.current === current) { setBusy(false); loading.current = false }
     }
   }, [])
-  return (
-    <>
-      <div className="pub-title">
-        <h1>친구 피드</h1>
-        <button aria-label="피드 새로고침" disabled={busy} onClick={() => void load()}>
-          <RefreshCw size={17} />
-        </button>
-      </div>
-      {error && <p role="alert">{error}</p>}
-      {page?.posts.length === 0 && (
-        <div className="pub-empty">
-          <HeartHandshake size={28} />
-          <p>친구가 올린 소식이 여기에 보여요.</p>
-          <a className="pub-talk" href="/">친구 만나기 ↗</a>
+
+  useEffect(() => {
+    void load()
+    let active = true
+    discover().then(data => {
+      if (active) setPeople(new Map(data.characters.map(person => [person.id, person])))
+    }).catch(() => { /* The feed still has the public author name. */ })
+    const refresh = () => {
+      if (!document.hidden && !loadedOlder.current && !profileRoute() && !history.state?.wsPhoto && window.scrollY < 8) void load()
+    }
+    const restore = () => setRoute(profileRoute())
+    const hashChanged = (event: HashChangeEvent) => {
+      if (new URL(event.oldURL).pathname === '/feed/' && location.pathname === '/feed/') {
+        setUnavailable(false)
+        setTarget(linkedPost())
+      }
+    }
+    window.addEventListener('popstate', restore)
+    window.addEventListener('hashchange', hashChanged)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      active = false
+      sequence.current++
+      loading.current = false
+      window.removeEventListener('popstate', restore)
+      window.removeEventListener('hashchange', hashChanged)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [load])
+
+  useEffect(() => {
+    if (!target || !page || route || busy || error) return
+    const article = document.getElementById('post-'+target)
+    if (article) {
+      const position = savedPosition.current
+      const author = position && document.getElementById('feed-author-'+position.postId)
+      if (position && author && position.postId === target) {
+        author.focus({ preventScroll: true })
+        window.scrollBy(0, author.getBoundingClientRect().top - position.authorTop)
+      } else {
+        article.scrollIntoView({ block: 'start' })
+        article.focus({ preventScroll: true })
+      }
+      savedPosition.current = null
+      setTarget(null)
+    } else if (page.next_cursor) {
+      void load(page.next_cursor)
+    } else {
+      setUnavailable(true)
+      setTarget(null)
+    }
+  }, [target, page, route, busy, error, load])
+
+  function openProfile(event: MouseEvent<HTMLAnchorElement>, characterId: number, postId: number) {
+    if (!isPlainClick(event)) return
+    event.preventDefault()
+    const next = { characterId, postId, authorTop: event.currentTarget.getBoundingClientRect().top }
+    history.replaceState({ ...history.state, wsFeedReturn: next }, '')
+    history.pushState({ ...history.state, wsFeedProfile: next }, '', event.currentTarget.href)
+    setRoute(next)
+  }
+  function openPost(id: number) {
+    history.pushState(null, '', '/feed/#post-'+id)
+    setRoute(null)
+    setUnavailable(false)
+    setTarget(id)
+  }
+
+  return <>
+    <div className="people-heading"><h1>친구 피드</h1><button className="feed-refresh" type="button" aria-label="피드 새로고침" disabled={busy} onClick={() => void load()}><RefreshCw size={17}/></button></div>
+    {error && <div role="alert" className="people-alert">{error}<button onClick={() => void load(retryCursor.current)}>다시 시도</button></div>}
+    {unavailable && <p role="status" className="people-note">이 게시물을 볼 수 없어요.</p>}
+    {page?.posts.length === 0 && <div className="people-empty"><HeartHandshake size={28}/><p>친구가 올린 소식이 여기에 보여요.</p><a href="/discover/">친구 만나기 <ArrowUpRight size={16}/></a></div>}
+    <div className="feed-posts">{page?.posts.map(post => {
+      const person = people.get(post.character_id) || { name: post.name, profile_image: null }
+      return <article key={post.id} className="feed-post" id={'post-'+post.id} tabIndex={-1} aria-label={post.name+'의 소식'}>
+        <div className="feed-post-head">
+          <a className="feed-author" id={'feed-author-'+post.id} href={`/people/${post.character_id}/`}
+            aria-label={post.name+' 프로필'} aria-describedby={'feed-time-'+post.id} aria-haspopup="dialog"
+            onClick={event => openProfile(event, post.character_id, post.id)}>
+            <FriendIdentity person={person} detail={<time id={'feed-time-'+post.id} dateTime={post.published_at}>{stamp.format(new Date(post.published_at))}</time>}/>
+          </a>
+          {post.photo.ai_generated && <small className="feed-ai">AI 생성 사진</small>}
         </div>
-      )}
-      <div className="pub-grid">
-        {page?.posts.map((p) => (
-          <article key={p.id} className="pub-card">
-            <a className="pub-photo-link" href={`/chat/from-post/${p.id}/`} aria-label={`${p.name}에게 이 사진으로 말 걸기`}>
-              <img src={p.photo.url} alt={p.photo.alt} />
-            </a>
-            <div className="pub-info">
-              <a href={`/people/${p.character_id}/`}><strong>{p.name}</strong></a>
-              <time>{stamp.format(new Date(p.published_at))}</time>
-              <p>{p.caption}</p>
-              <a className="pub-talk" href={`/chat/from-post/${p.id}/`}>{p.name}에게 말 걸기 ↗</a>
-              {p.photo.ai_generated && <small>AI 생성 사진</small>}
-            </div>
-          </article>
-        ))}
-      </div>
-      {busy && <p role="status">소식 불러오는 중…</p>}
-      {page?.next_cursor && (
-        <button disabled={busy} onClick={() => void load(page.next_cursor!)}>
-          이전 소식 더 보기
-        </button>
-      )}
-    </>
-  )
+        <PostPhoto src={post.photo.url} alt={post.photo.alt} className="feed-post-photo"/>
+        <div className="feed-post-foot">
+          <p>{post.caption}</p>
+          <a className="feed-quote" href={`/chat/from-post/${post.id}/`}><MessageCircle size={15}/>{post.name}에게 말 걸기<ArrowUpRight size={15}/></a>
+        </div>
+      </article>
+    })}</div>
+    {busy && <p className="people-note" role="status">소식 불러오는 중…</p>}
+    {page?.next_cursor && <button className="profile-more" disabled={busy} onClick={() => void load(page.next_cursor!)}>이전 소식 더 보기<ChevronDown size={16}/></button>}
+    {route && <FeedProfileDialog key={route.postId} route={route} load={loadProfile} openPost={openPost}/>}
+  </>
 }
 
 function CandidateEditor({
@@ -648,6 +767,7 @@ function Studio() {
 }
 
 export default function Publication({ studio, canPublish }: { studio: boolean; canPublish: boolean }) {
+  if (!studio) return <div className="people"><PeopleHeader page="feed" canPublish={canPublish}/><main className="people-main feed-main"><Feed/></main></div>
   const csrf = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/)?.[1] || ''
   return (
     <div className="pub">
@@ -657,14 +777,13 @@ export default function Publication({ studio, canPublish }: { studio: boolean; c
         </a>
         <nav>
           <a href="/home/">친구 홈</a>
-          {canPublish && !studio && <a href="/studio/">주간 발행</a>}
           <form method="post" action="/logout/">
             <input type="hidden" name="csrfmiddlewaretoken" value={csrf} />
             <button>로그아웃</button>
           </form>
         </nav>
       </header>
-      <main>{studio ? <Studio /> : <Feed />}</main>
+      <main><Studio /></main>
     </div>
   )
 }

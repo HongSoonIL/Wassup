@@ -12,8 +12,16 @@ def world_now():
     return timezone.now()
 
 
-def routine_at(character, at):
+def active_routines(at):
+    from .models import RoutineTemplate
+
     local = timezone.localtime(at)
-    return (character.routines.filter(weekday=local.weekday(), start_time__lte=local.time())
-            .filter(Q(end_time__gt=local.time()) | Q(end_time='00:00'))
-            .order_by('-start_time').first())
+    return (
+        RoutineTemplate.objects.filter(weekday=local.weekday(), start_time__lte=local.time())
+        .filter(Q(end_time__gt=local.time()) | Q(end_time='00:00'))
+        .order_by('-start_time')
+    )
+
+
+def routine_at(character, at):
+    return active_routines(at).filter(character=character).first()

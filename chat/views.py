@@ -21,7 +21,7 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
 from .models import Friendship, Message, ReplyBubble, ReplyPlan
-from world.clock import routine_at, world_now
+from world.clock import active_routines, routine_at, world_now
 from world.publication import published_posts
 from world.models import Character, FeedPost
 from .replies import accept_message
@@ -122,11 +122,13 @@ def friend_list(request):
     last_message_id = Subquery(
         Message.objects.filter(room=OuterRef('pk')).order_by('-id').values('id')[:1]
     )
+    active_slot = active_routines(world_now()).filter(character_id=OuterRef('character_id'))
     rooms = list(
         Friendship.objects.filter(user=request.user)
         .select_related('character')
         .annotate(
             last_message_id=last_message_id,
+            current_activity=Subquery(active_slot.values('activity')[:1]),
             unread_count=Count(
                 'messages',
                 filter=Q(messages__sender=Message.Sender.CHARACTER, messages__read_at__isnull=True),
@@ -142,6 +144,7 @@ def friend_list(request):
         friends.append({
             'room_id': room.id,
             'character': public_character_json(room.character),
+            'current_activity': room.current_activity,
             'last_message': message_json(last) if last else None,
             'unread_count': room.unread_count,
         })

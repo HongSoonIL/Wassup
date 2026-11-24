@@ -2,7 +2,7 @@
 
 ## 현재 Django API
 
-`/signup/`에서 가입하거나 `/login/`에서 로그인한 뒤 `/discover/`에서 친구를 추가한다. 같은 브라우저에서 `GET /api/friends/`를 열어 `friends[].room_id`를 확인한다. 이 값이 채팅방 번호다. 채팅방 헤더에는 같은 항목의 `character.name`, `status_message`, `profile_image`를 사용한다. 프로필 이미지와 마지막 메시지는 `null`일 수 있다.
+`/signup/`에서 가입하거나 `/login/`에서 로그인한 뒤 `/discover/`에서 친구를 추가한다. 같은 브라우저에서 `GET /api/friends/`를 열어 `friends[].room_id`를 확인한다. 이 값이 채팅방 번호다. 채팅방 헤더에는 같은 항목의 `character.name`, `status_message`, `profile_image`를 사용한다. 친구 홈에는 `friends[].current_activity`로 해당 시각에 진행 중인 일과를 표시한다. 현재 일과·프로필 이미지·마지막 메시지는 각각 `null`일 수 있다.
 
 | 요청 | 성공 응답과 화면 동작 |
 |---|---|

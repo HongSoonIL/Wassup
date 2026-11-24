@@ -2,7 +2,7 @@ export type Quote = { status: 'available'; id: number; version: number; caption:
 export type Profile = {
   id: number; room_id: number; name: string; profile_image: string | null
   status_message: string; current_activity: string | null; next_cursor: string | null
-  posts: {id: number; caption: string; published_at: string; photo: {url:string; alt:string; ai_generated:boolean}}[]
+  posts: {id: number; version: number; caption: string; published_at: string; photo: {url:string; alt:string; ai_generated:boolean}}[]
 }
 
 export type Message = {
@@ -29,12 +29,18 @@ export function returnToLogin() {
   window.location.replace('/login/?next=' + encodeURIComponent(next))
 }
 
+export class RequestError extends Error {
+  constructor(public status: number, message: string) {
+    super(message)
+  }
+}
+
 export async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, { cache: 'no-store', ...init })
   if (res.status === 401) returnToLogin()
   if (!res.ok) {
     const body = await res.json().catch(() => null)
-    throw new Error(body?.detail || '연결을 확인하고 다시 시도해 주세요.')
+    throw new RequestError(res.status, body?.detail || '연결을 확인하고 다시 시도해 주세요.')
   }
   return res.json()
 }

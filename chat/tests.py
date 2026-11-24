@@ -1,15 +1,18 @@
 import json
-from datetime import timedelta
+from datetime import UTC, datetime, time, timedelta
+from unittest.mock import patch
 
 from django.db import IntegrityError
-from django.test import Client, TestCase
+from django.test import Client, RequestFactory, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from accounts.models import User
-from world.models import Character
+from world.clock import routine_at
+from world.models import Character, RoutineTemplate, State
 
 from .models import Friendship, Message, ReplyPlan
+from .views import friend_list
 
 
 class ChatAPITestBase(TestCase):
@@ -206,6 +209,32 @@ class FriendListTests(ChatAPITestBase):
         self.assertEqual(dohyun['unread_count'], 2)  # 내가 보낸 것과 이미 읽은 것은 세지 않는다
         self.assertIsNone(friends[1]['last_message'])
         self.assertEqual(friends[1]['unread_count'], 0)
+
+    def test_current_activity_uses_the_room_routine_at_korean_midnight(self):
+        Friendship.objects.create(user=self.jisu, character=self.seoyun)
+        for weekday, start, end, activity in [
+            (RoutineTemplate.Weekday.TUE, 21, 0, '집'),
+            (RoutineTemplate.Weekday.TUE, 23, 0, '잠들기 전'),
+            (RoutineTemplate.Weekday.WED, 0, 8, '수면'),
+        ]:
+            RoutineTemplate.objects.create(
+                character=self.dohyun, weekday=weekday, start_time=time(start),
+                end_time=time(end), activity=activity, state=State.FREE,
+            )
+        request = RequestFactory().get(self.url)
+        request.user = self.jisu
+        for at, expected in [
+            (datetime(2026, 11, 24, 14, 59, tzinfo=UTC), '잠들기 전'),
+            (datetime(2026, 11, 24, 15, 0, tzinfo=UTC), '수면'),
+            (datetime(2026, 11, 24, 23, 0, tzinfo=UTC), None),
+        ]:
+            with self.subTest(at=at), patch('chat.views.world_now', return_value=at):
+                with self.assertNumQueries(1):
+                    friends = json.loads(friend_list(request).content)['friends']
+                activities = {row['character']['id']: row['current_activity'] for row in friends}
+                self.assertEqual(activities, {self.dohyun.pk: expected, self.seoyun.pk: None})
+                slot = routine_at(self.dohyun, at)
+                self.assertEqual(slot.activity if slot else None, expected)
 
     def test_anonymous_returns_401(self):
         self.client.logout()
