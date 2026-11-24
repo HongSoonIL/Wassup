@@ -3,6 +3,7 @@
 import logging
 from http.client import HTTPException
 from datetime import timedelta
+from time import monotonic
 from uuid import uuid4
 
 from django.conf import settings
@@ -11,14 +12,15 @@ from django.db.models import Q
 
 from chat.live import publish_room_events
 from chat.models import Friendship, Message, ReplyPlan
-from chat.reply_timing import ReplyTiming, plan_reply
+from chat.reply_timing import CONVERSATION_WINDOW, ReplyTiming, plan_reply
 from chat.serialization import iso, message_json
 from world.clock import world_now
 from world.publication import published_posts
 from llm.dialogue import context_for, openai_reply, sample_reply
 
 
-ACTIVE = (ReplyPlan.Status.PLANNED, ReplyPlan.Status.READY)
+ACTIVE = (ReplyPlan.Status.PLANNED, ReplyPlan.Status.READ, ReplyPlan.Status.READY)
+GENERATION_LEAD = timedelta(minutes=2)
 
 
 @transaction.atomic
@@ -39,7 +41,7 @@ def accept_message(room_id, text, source_post_id=None):
     if plan:
         plan.trigger_message = message
         plan.result, plan.model_name, plan.context_versions = [], '', {}
-        plan.generation_token = plan.generation_until = None
+        plan.generation_token = plan.generation_until = plan.generation_ms = None
         plan.save(
             update_fields=[
                 'trigger_message',
@@ -48,16 +50,19 @@ def accept_message(room_id, text, source_post_id=None):
                 'context_versions',
                 'generation_token',
                 'generation_until',
+                'generation_ms',
                 'updated_at',
             ]
         )
     else:
-        timing = plan_reply(now, room.character.routines.all())
+        continuing = room.messages.filter(sender=Message.Sender.CHARACTER,
+                                          created_at__gte=now - CONVERSATION_WINDOW).exists()
+        timing = plan_reply(now, room.character.routines.all(),
+                            persona=getattr(room.character, 'persona', None), continuing=continuing)
         demo_seconds = settings.WASSUP_REPLY_DEMO_SECONDS
         if settings.DEBUG and demo_seconds > 0:
             duration = timedelta(seconds=demo_seconds)
-            read_at = now + duration / 4
-            timing = ReplyTiming(read_at, read_at, now + duration)
+            timing = ReplyTiming(now + duration / 2, now + 3 * duration / 4, now + duration)
         ReplyPlan.objects.create(
             room=room,
             trigger_message=message,
@@ -73,6 +78,7 @@ def dispatch_due(now=None, limit=100):
     due = (
         ReplyPlan.objects.filter(
             Q(status=ReplyPlan.Status.PLANNED, read_at__lte=now)
+            | Q(status=ReplyPlan.Status.READ, typing_at__lte=now)
             | Q(status=ReplyPlan.Status.READY, reply_at__lte=now)
         )
         .order_by('reply_at')
@@ -98,8 +104,8 @@ def _dispatch_plan(plan_id, room_id, now):
         sender=Message.Sender.USER,
         read_at__isnull=True,
     )
-    if plan.reply_at <= now or plan.status == ReplyPlan.Status.PLANNED:
-        ids = list(unread.values_list('id', flat=True))
+    ids = list(unread.values_list('id', flat=True))
+    if ids:
         unread.update(read_at=now)
         events.extend({'type': 'message.read', 'message_id': pk, 'read_at': iso(now)} for pk in ids)
 
@@ -124,10 +130,13 @@ def _dispatch_plan(plan_id, room_id, now):
             events.append({'type': 'message.new', 'message': message_json(reply)})
         plan.result, plan.status = bubbles, ReplyPlan.Status.SENT
         plan.save(update_fields=['result', 'status', 'model_name', 'updated_at'])
-    elif plan.status == ReplyPlan.Status.PLANNED:
+    elif plan.typing_at <= now and plan.status != ReplyPlan.Status.READY:
         plan.status = ReplyPlan.Status.READY
         plan.save(update_fields=['status', 'updated_at'])
         events.append({'type': 'typing.start', 'expires_at': iso(plan.reply_at)})
+    elif plan.status == ReplyPlan.Status.PLANNED:
+        plan.status = ReplyPlan.Status.READ
+        plan.save(update_fields=['status', 'updated_at'])
 
     if events:
         transaction.on_commit(lambda: publish_room_events(room_id, events))
@@ -140,7 +149,7 @@ def prepare_next_reply():
         plan = (
             ReplyPlan.objects.select_for_update(skip_locked=True, of=('self',))
             .select_related('room__character')
-            .filter(status__in=ACTIVE, reply_at__gt=now, result=[])
+            .filter(status__in=ACTIVE, reply_at__gt=now, reply_at__lte=now + GENERATION_LEAD, result=[])
             .filter(Q(generation_until__isnull=True) | Q(generation_until__lte=now))
             .order_by('reply_at', 'id')
             .first()
@@ -152,6 +161,7 @@ def prepare_next_reply():
         plan.attempts += 1
         plan.save(update_fields=['generation_token', 'generation_until', 'attempts'])
         context = context_for(plan, now)
+    started = monotonic()
     try:
         result = openai_reply(context)
         model_name = settings.LLM_MODEL[: ReplyPlan._meta.get_field('model_name').max_length]
@@ -167,6 +177,7 @@ def prepare_next_reply():
         pk=plan.pk, status__in=ACTIVE, generation_token=token, trigger_message_id=plan.trigger_message_id
     ).update(
         result=result,
+        generation_ms=round((monotonic() - started) * 1000),
         model_name=model_name,
         generation_token=None,
         generation_until=None,

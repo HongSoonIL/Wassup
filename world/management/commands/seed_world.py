@@ -3,7 +3,7 @@
     python manage.py seed_world
 
 여러 번 실행해도 캐릭터가 늘어나지 않는다. 이름으로 찾아서 설계서 값으로 덮어쓴다.
-도현의 일과는 그림 6의 목요일만 넣었다. 다른 요일과 서윤의 일과는 admin에서 채운다.
+기본 일과는 비어 있는 요일에만 넣어 운영자가 편집한 시간표를 보존한다.
 """
 from datetime import time
 
@@ -69,8 +69,44 @@ CHARACTERS = [
 ]
 
 
+def seed_missing_schedule(character, data):
+    """Keep an edited weekday intact. Gaps in the template are free time."""
+    existing_days = set(character.routines.values_list('weekday', flat=True))
+    rows = []
+    for day in range(7):
+        if day in existing_days:
+            continue
+        day_rows = [r[1:] for r in data['routines'] if r[0] == day]
+        if not day_rows:
+            if character.name == '서윤':
+                day_rows = [(time(0), time(8), '자는 중', State.SLEEP)]
+                if day < 5:
+                    day_rows += [
+                        (time(8), time(9, 30), '통학 중', State.MOVING),
+                        (time(9, 30), time(12, 30), '실기 수업 중', State.CLASS),
+                        (time(12, 30), time(14), '점심시간', State.FREE),
+                        (time(14), time(18), '작업실에서 시안 보는 중',
+                         State.FOCUS if day in (0, 2, 3) else State.FREE),
+                        (time(18), time(19, 30), '집에 가는 길', State.MOVING),
+                        (time(19, 30), time(20), '두부랑 쉬는 중', State.FREE),
+                        (time(20), time(0), '집에서 과제 중', State.FREE),
+                    ]
+            else:
+                day_rows = [(time(0), time(9, 30), '자는 중', State.SLEEP)]
+                if day < 5:
+                    day_rows += [
+                        (time(9, 30), time(10, 30), '등교 중', State.MOVING),
+                        (time(10, 30), time(12), '수업 중', State.CLASS),
+                        (time(12), time(13), '점심시간', State.FREE),
+                    ]
+        rows.extend(RoutineTemplate(character=character, weekday=day, start_time=start, end_time=end,
+                                    activity=activity, state=state)
+                    for start, end, activity, state in day_rows)
+    RoutineTemplate.objects.bulk_create(rows)
+
+
 class Command(BaseCommand):
-    help = '도현·서윤 캐릭터와 페르소나, 도현의 목요일 일과를 넣는다.'
+    help = '도현·서윤 캐릭터와 페르소나, 기본 주간 일과를 넣는다.'
 
     @transaction.atomic
     def handle(self, *args, **options):
@@ -80,16 +116,6 @@ class Command(BaseCommand):
             character, created = Character.objects.update_or_create(name=name, defaults=info)
             Persona.objects.update_or_create(character=character, defaults=data['persona'])
 
-            if data['routines']:
-                weekdays = {r[0] for r in data['routines']}
-                character.routines.filter(weekday__in=weekdays).delete()
-                RoutineTemplate.objects.bulk_create(
-                    RoutineTemplate(
-                        character=character, weekday=weekday, start_time=start, end_time=end,
-                        activity=activity, state=state,
-                    )
-                    for weekday, start, end, activity, state in data['routines']
-                )
-
-            self.stdout.write(f"{'추가' if created else '갱신'}: {name} (일과 {len(data['routines'])}칸)")
+            seed_missing_schedule(character, data)
+            self.stdout.write(f"{'추가' if created else '갱신'}: {name} (일과 {character.routines.count()}칸)")
         self.stdout.write(self.style.SUCCESS('시드 데이터를 넣었어요.'))

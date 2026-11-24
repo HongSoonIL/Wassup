@@ -74,6 +74,7 @@ class ReplyPlan(models.Model):
     class Status(models.TextChoices):
         PLANNED = 'planned', '계획됨'      # 시각만 정해짐, 답장 생성 전
         GENERATING = 'generating', '생성 중'
+        READ = 'read', '읽음'
         READY = 'ready', '준비됨'          # 출력 검사를 통과한 답장이 있음
         SENT = 'sent', '보냄'
         FAILED = 'failed', '실패'
@@ -90,6 +91,7 @@ class ReplyPlan(models.Model):
     status = models.CharField('상태', max_length=12, choices=Status.choices, default=Status.PLANNED)
     generation_token = models.UUIDField(null=True, editable=False)
     generation_until = models.DateTimeField(null=True, editable=False)
+    generation_ms = models.PositiveIntegerField(null=True, editable=False)
     context_versions = models.JSONField(default=dict, blank=True)
     model_name = models.CharField('사용 모델', max_length=50, blank=True)
     attempts = models.PositiveSmallIntegerField('시도 수', default=0)

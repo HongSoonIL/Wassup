@@ -30,9 +30,13 @@ class ReplyDispatchTests(TestCase):
 
         dispatch_due(now + timedelta(seconds=1))
         first.refresh_from_db()
+        self.assertIsNone(first.read_at)
+        with patch('chat.replies.publish_room_events'), self.captureOnCommitCallbacks(execute=True):
+            dispatch_due(now + timedelta(seconds=2))
+        first.refresh_from_db()
         self.assertIsNotNone(first.read_at)
         planned.refresh_from_db()
-        self.assertEqual(planned.status, ReplyPlan.Status.READY)
+        self.assertEqual(planned.status, ReplyPlan.Status.READ)
 
         with patch('chat.replies.world_now', return_value=now + timedelta(seconds=2)):
             second = accept_message(self.room.pk, '아 맞다 오늘 알바지?')
@@ -41,6 +45,14 @@ class ReplyDispatchTests(TestCase):
         self.assertEqual(planned.trigger_message_id, second.pk)
         self.assertEqual(planned.reply_at, now + timedelta(seconds=4))
 
+        with patch('chat.replies.publish_room_events') as publish, self.captureOnCommitCallbacks(execute=True):
+            dispatch_due(now + timedelta(seconds=3))
+        self.assertEqual([e['type'] for e in publish.call_args.args[1]], ['message.read', 'typing.start'])
+        planned.refresh_from_db()
+        self.assertEqual(planned.status, ReplyPlan.Status.READY)
+        self.client.force_login(self.room.user)
+        with patch('chat.views.world_now', return_value=now + timedelta(seconds=3)):
+            self.assertIsNotNone(self.client.get(f'/api/rooms/{self.room.pk}/messages/').json()['typing_until'])
         dispatch_due(now + timedelta(seconds=4))
         dispatch_due(now + timedelta(seconds=5))
         planned.refresh_from_db()
@@ -54,4 +66,5 @@ class ReplyDispatchTests(TestCase):
         now = datetime(2026, 11, 19, 9, 40, tzinfo=timezone.utc)
         with patch('chat.replies.world_now', return_value=now):
             accept_message(self.room.pk, '뭐해?')
-        self.assertEqual(self.room.reply_plans.get().reply_at, now + timedelta(seconds=30))
+        plan = self.room.reply_plans.get()
+        self.assertTrue(now + timedelta(seconds=4) < plan.read_at < plan.typing_at < plan.reply_at)

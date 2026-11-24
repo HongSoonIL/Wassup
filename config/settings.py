@@ -166,7 +166,7 @@ STORAGES = {
     'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'},
     'post_photos': {
         'BACKEND': 'django.core.files.storage.FileSystemStorage',
-        'OPTIONS': {'location': os.environ.get('POST_PHOTO_DIR', BASE_DIR / 'private-media')},
+        'OPTIONS': {'location': BASE_DIR / os.environ.get('POST_PHOTO_DIR', 'private-media')},
     },
 }
 

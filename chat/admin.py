@@ -20,7 +20,7 @@ class MessageAdmin(admin.ModelAdmin):
 
 @admin.register(ReplyPlan)
 class ReplyPlanAdmin(admin.ModelAdmin):
-    list_display = ('id', 'room', 'status', 'read_at', 'typing_at', 'reply_at', 'model_name', 'attempts')
+    list_display = ('id', 'room', 'status', 'read_at', 'typing_at', 'reply_at', 'model_name', 'generation_ms', 'attempts')
     list_filter = ('status',)
     list_select_related = ('room__user', 'room__character')
     raw_id_fields = ('trigger_message',)

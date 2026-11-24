@@ -8,8 +8,9 @@
 |---|---|
 | `GET /api/rooms/{room_id}/messages/` | `200`. `{"messages": [], "has_more": false}` 형식. 기본 30개를 오래된 순서로 표시한다. 이전 페이지는 가장 작은 메시지 ID를 `before`에 넣어 요청한다. |
 | `POST /api/rooms/{room_id}/messages/` | `{"text":"뭐해?"}`를 보내면 `201`과 `{"id":41,"status":"sent","created_at":"2026-11-26T18:40:00+09:00"}`가 돌아온다. 보낸 본문과 반환된 ID로 내 말풍선을 표시한다. |
+| `POST /api/rooms/{room_id}/read/` | 사용자가 열린 방에서 본 상대 말풍선의 ID를 `{"through_id":42}`로 보낸다. 서버가 그 ID까지 받은 말풍선을 읽음 처리하고 남은 `unread_count`를 돌려준다. |
 
-두 요청 모두 로그인 세션을 사용한다. 먼저 GET으로 받은 `csrftoken` 쿠키 값을 POST의 `X-CSRFToken` 헤더에 넣고 `Content-Type: application/json`을 지정한다. 공백뿐인 메시지 또는 1,000자를 초과한 본문은 `400`이다. `401`이면 로그인이 필요하다. `403`이면 방 접근 권한 또는 CSRF 토큰을 확인하고, `404`이면 방 번호를 확인한다. 네트워크가 응답 전에 끊기면 메시지가 이미 저장됐을 수 있으므로 기록을 조회한 뒤 재전송 여부를 결정한다.
+최신 기록 조회는 현재 일과 `current_activity`와 실제로 입력 중인 경우 종료 시각 `typing_until`도 반환한다. 다시 연결한 탭은 이 값으로 입력 표시를 복원한다. 모든 요청은 로그인 세션을 사용한다. 먼저 GET으로 받은 `csrftoken` 쿠키 값을 POST의 `X-CSRFToken` 헤더에 넣고 `Content-Type: application/json`을 지정한다. 공백뿐인 메시지 또는 1,000자를 초과한 본문은 `400`이다. `401`이면 로그인이 필요하다. `403`이면 방 접근 권한 또는 CSRF 토큰을 확인하고, `404`이면 방 번호를 확인한다. 네트워크가 응답 전에 끊기면 메시지가 이미 저장됐을 수 있으므로 기록을 조회한 뒤 재전송 여부를 결정한다.
 
 ## 예약 답장 이벤트
 
@@ -63,7 +64,7 @@ Django에서 실제 기록을 사용하려면 같은 frontend 디렉터리에서
 
 로컬 채팅 화면과 함께 예약 답장을 확인하려면 Redis를 포함해 Docker Compose 서비스를 실행한다. Django는 `python manage.py runserver`로, 별도 터미널의 발송 워커는 `python manage.py run_reply_worker`로 실행한다. 둘 다 같은 환경 변수와 PostgreSQL·Redis에 연결한다.
 
-개발 환경에서 빠르게 시연하려면 Django 웹 프로세스에 `DJANGO_DEBUG=True WASSUP_REPLY_DEMO_SECONDS=2`를 적용한다. 이 설정에서는 새 메시지의 일정이 초 단위로 압축된다. 운영 설정에서는 도현의 요일별 일과와 3시간 상한을 적용한다.
+개발 환경에서 빠르게 시연하려면 Django 웹 프로세스에 `DJANGO_DEBUG=True WASSUP_REPLY_DEMO_SECONDS=2`를 적용한다. 이 설정에서는 새 메시지의 일정이 초 단위로 압축된다. 일반 설정에서는 캐릭터의 한국 시각 일과, 답장 속도와 타자 속도로 읽음·입력·발송 시각을 따로 예약한다. 한가할 때 최근 5분 안에 주고받은 방은 다음 확인이 빨라진다. 깨어 있을 때의 첫 답장 기한은 3시간이고 수면은 기상 시각을 반영한다. 워커는 발송 예정 2분 전부터 답장을 미리 생성할 수 있다. 답장 계획의 `generation_ms`는 모델 호출 소요 시간이다.
 
 1. 로그인한 계정으로 `/chat/{room_id}/`를 열고 메시지를 두 건 보낸다.
 2. 실시간 연결에서 읽음, 입력 중, 새 답장 순서를 확인한다.

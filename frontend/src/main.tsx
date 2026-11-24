@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ArrowUp, ChevronLeft, Coffee, Info, MessageCircle, X, ZoomIn } from 'lucide-react'
-import { getFriends, getMessages, getProfile, mergeMessages, sendMessage } from './chat'
+import { getFriends, getMessages, getProfile, markRead, mergeMessages, sendMessage } from './chat'
 import type { Friend, Message, Profile, Quote } from './chat'
 import { subscribeToRoom } from './live'
 import { sampleFriend, sampleMessages } from './preview'
@@ -50,6 +50,8 @@ function Chat() {
   const [busy, setBusy] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [sendError, setSendError] = useState('')
+  const [activity, setActivity] = useState<string | null>(null)
+  const seenThrough = useRef(0)
   const [typing, setTyping] = useState(false)
   const [listOpen, setListOpen] = useState(false)
   const [modal, setModal] = useState<'profile' | 'photo' | null>(null)
@@ -74,12 +76,16 @@ function Chat() {
     let active = true
     let syncing = false
     let first = true
+    let liveRevision = 0
     async function sync() {
       if (syncing || document.hidden) return
       syncing = true
+      const revision = liveRevision
       try {
         const [history, list] = await Promise.all([getMessages(room), getFriends()])
         if (!active) return
+        setActivity(history.current_activity || null)
+        if (revision === liveRevision) showTypingUntil(history.typing_until)
         setFriends(list.friends)
         setMessages(old => mergeMessages(old, history.messages))
         if (first) setMore(history.has_more)
@@ -102,12 +108,19 @@ function Chat() {
       clearTimeout(typingTimer)
       setTyping(false)
     }
+    function showTypingUntil(expires?: string | null) {
+      clearTimeout(typingTimer)
+      const duration = expires ? Date.parse(expires) - Date.now() : 0
+      setTyping(duration > 0)
+      if (duration > 0) typingTimer = window.setTimeout(stopTyping, duration)
+    }
     function resync() {
       if (syncing) needsSync = true
       else void sync()
     }
 
     const disconnect = subscribeToRoom(room, event => {
+      liveRevision++
       switch (event.type) {
         case 'message.read':
           setMessages(old => old.map(message => message.id === event.message_id
@@ -120,16 +133,9 @@ function Chat() {
           if (!pin.current || profileScroll.current !== null) setNewBelow(true)
           setMessages(old => mergeMessages(old, [event.message]))
           break
-        case 'typing.start': {
-          stopTyping()
-          const expiresIn = event.expires_at ? Date.parse(event.expires_at) - Date.now() : 8000
-          const duration = Number.isFinite(expiresIn) ? Math.min(expiresIn, 30_000) : 8000
-          if (duration > 0) {
-            setTyping(true)
-            typingTimer = window.setTimeout(stopTyping, duration)
-          }
+        case 'typing.start':
+          showTypingUntil(event.expires_at || new Date(Date.now() + 8000).toISOString())
           break
-        }
         case 'typing.stop':
           stopTyping()
           break
@@ -158,6 +164,40 @@ function Chat() {
       prepend.current = null
     } else if (pin.current) el.scrollTop = el.scrollHeight
   }, [messages, typing, listOpen])
+
+  useEffect(() => {
+    const thread = scroll.current
+    if (demo || !thread || listOpen || modal || !ready) return
+    const visible = new Set<number>()
+    const acknowledge = () => {
+      if (document.hidden || !document.hasFocus() || !visible.size) return
+      const through = Math.max(...visible)
+      if (through <= seenThrough.current) return
+      const previous = seenThrough.current
+      seenThrough.current = through
+      markRead(room, through).then(({ unread_count }) => {
+        if (seenThrough.current === through) {
+          setFriends(old => old.map(f => f.room_id === room ? { ...f, unread_count } : f))
+        }
+      }).catch(() => { if (seenThrough.current === through) seenThrough.current = previous })
+    }
+    const observer = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        const id = Number((entry.target as HTMLElement).dataset.unread)
+        if (entry.isIntersecting) visible.add(id)
+        else visible.delete(id)
+      }
+      acknowledge()
+    }, { root: thread, threshold: 0.5 })
+    thread.querySelectorAll('[data-unread]').forEach(el => observer.observe(el))
+    window.addEventListener('focus', acknowledge)
+    document.addEventListener('visibilitychange', acknowledge)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('focus', acknowledge)
+      document.removeEventListener('visibilitychange', acknowledge)
+    }
+  }, [messages, listOpen, modal, ready])
 
   useEffect(() => {
     const viewport = window.visualViewport
@@ -295,7 +335,7 @@ function Chat() {
         <button className="chat-person" aria-label={name+' 프로필'} onClick={openProfile}><Avatar friend={friend}/><span className="head-title"><b>{name}</b><span>AI 친구</span>{(demo || root.dataset.sampleReplies === 'true') && <small className="demo-tag">{demo ? '미리보기' : '샘플 답장'}</small>}</span></button>
         <button className="icon-button info" onClick={openProfile} aria-label="친구 정보"><Info size={21}/></button>
       </header>
-      {status && <div className="status-strip">{status.includes('카페') ? <Coffee size={15}/> : <MessageCircle size={15}/>}<span>{status}</span><i/></div>}
+      {(activity || status) && <div className="status-strip">{(activity || status)?.includes('카페') ? <Coffee size={15}/> : <MessageCircle size={15}/>}<span>{activity || status}</span><i/></div>}
       {loadError && <p className="notice" role="status">{loadError}</p>}
       <div className="thread" ref={scroll} onScroll={e => { const el = e.currentTarget; pin.current = el.scrollHeight - el.clientHeight - el.scrollTop < 64; if (pin.current) setNewBelow(false) }}>
         <div className="thread-inner">
@@ -313,7 +353,7 @@ function Chat() {
                 <div className="message-body">
                   {!own && start && <b className="speaker">{name}</b>}
                   <div className="bubble-row">
-                    <div className={'bubble' + (m.photo ? ' with-photo' : '')}>
+                    <div data-unread={!own && !m.read_at ? m.id : undefined} className={'bubble' + (m.photo ? ' with-photo' : '')}>
                       {m.source_post && <QuoteCard quote={m.source_post}/>}
                       {m.photo && <button className="photo" onClick={() => showPhoto(m.photo!)}><img src={m.photo} alt="채팅 사진 확대"/></button>}
                       {(m.text || m.kind === 'photo') && <span>{m.text || '사진'}</span>}

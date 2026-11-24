@@ -16,12 +16,24 @@ class SeedWorldTests(TestCase):
 
         self.assertEqual(Character.objects.count(), 2)
         self.assertEqual(Persona.objects.count(), 2)
+        for character in Character.objects.all():
+            self.assertEqual(character.routines.order_by().values('weekday').distinct().count(), 7)
         dohyun = Character.objects.get(name='도현')
         self.assertEqual(dohyun.persona.ignore_percent, 15)
         self.assertEqual(dohyun.routines.filter(weekday=RoutineTemplate.Weekday.THU).count(), 11)
         self.assertTrue(
             dohyun.routines.filter(activity='카페 알바', start_time=time(18), end_time=time(22), state=State.FOCUS).exists()
         )
+
+    def test_edited_weekday_survives_reseeding(self):
+        call_command('seed_world', stdout=StringIO())
+        artist = Character.objects.get(name='서윤')
+        studio = artist.routines.get(weekday=1, start_time=time(14))
+        studio.activity = '전시 설치'
+        studio.save(update_fields=['activity'])
+        call_command('seed_world', stdout=StringIO())
+        studio.refresh_from_db()
+        self.assertEqual(studio.activity, '전시 설치')
 
 
 class RoutineTemplateRuleTests(TestCase):

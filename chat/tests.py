@@ -124,6 +124,18 @@ class ListMessagesTests(ChatAPITestBase):
         self.assertEqual([m['text'] for m in body['messages']], ['메시지 2', '메시지 3', '메시지 4'])
         self.assertTrue(body['has_more'])
 
+    def test_receipt_marks_only_received_messages_up_to_the_visible_bubble(self):
+        url = reverse('chat:room-read', args=[self.room.pk])
+        def seen(pk):
+            return self.client.post(url, {'through_id': pk}, content_type='application/json')
+        self.assertEqual(seen(self.msgs[0].pk).status_code, 404)
+        self.assertEqual(seen(self.msgs[1].pk).json()['unread_count'], 1)
+        self.assertEqual(seen(self.msgs[1].pk).json()['unread_count'], 1)
+        self.assertFalse(self.room.messages.filter(sender=Message.Sender.USER, read_at__isnull=False).exists())
+        self.assertEqual(seen(self.msgs[3].pk).json()['unread_count'], 0)
+        url = reverse('chat:room-read', args=[self.other_room.pk])
+        self.assertEqual(seen(self.msgs[1].pk).status_code, 403)
+
     def test_before_loads_older_messages(self):
         res = self.client.get(self.messages_url(self.room.id), {'before': self.msgs[2].id, 'limit': 3})
 

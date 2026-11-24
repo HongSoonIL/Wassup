@@ -151,6 +151,28 @@ class QuotedConversationTests(TestCase):
         )
         self.assertEqual(plan.model_name, 'test-model')
 
+    def test_long_wait_defers_generation_and_uses_delivery_activity(self):
+        from datetime import time
+        from world.models import RoutineTemplate, State
+        self.quote()
+        plan = self.room.reply_plans.get()
+        now = timezone.localtime(plan.trigger_message.created_at).replace(hour=10, minute=0, second=0)
+        plan.reply_at = now + timedelta(hours=2)
+        plan.read_at = plan.reply_at - timedelta(seconds=10)
+        plan.typing_at = plan.reply_at - timedelta(seconds=6)
+        plan.save(update_fields=['read_at', 'typing_at', 'reply_at'])
+        RoutineTemplate.objects.create(character=self.artist, weekday=now.weekday(),
+                                       start_time=time(12), end_time=time(13), state=State.FREE, activity='점심시간')
+        with patch('chat.replies.world_now', return_value=now), patch('chat.replies.openai_reply') as model:
+            prepare_next_reply()
+            model.assert_not_called()
+        with patch('chat.replies.world_now', return_value=plan.reply_at - timedelta(seconds=30)), \
+                patch('chat.replies.openai_reply', return_value=['점심 먹으러 왔어']) as model:
+            prepare_next_reply()
+            self.assertEqual(model.call_args.args[0]['current_activity']['activity'], '점심시간')
+        plan.refresh_from_db()
+        self.assertIsNotNone(plan.generation_ms)
+
     def test_additional_message_or_revocation_prevents_stale_delivery(self):
         self.quote()
         first = self.room.reply_plans.get()

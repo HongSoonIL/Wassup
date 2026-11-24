@@ -17,10 +17,10 @@ from django.db.models import Count, F, OuterRef, Q, Subquery
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.csrf import ensure_csrf_cookie
-from django.views.decorators.http import require_GET, require_http_methods
+from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
-from .models import Friendship, Message
-from world.clock import world_now
+from .models import Friendship, Message, ReplyPlan
+from world.clock import routine_at, world_now
 from world.publication import published_posts
 from world.models import FeedPost
 from .replies import accept_message
@@ -185,4 +185,31 @@ def list_messages(request, room):
     has_more = len(page) > limit
     page = page[:limit]
     page.reverse()
-    return json_response({'messages': [message_json(m) for m in page], 'has_more': has_more})
+    data = {'messages': [message_json(m) for m in page], 'has_more': has_more}
+    if before is None:
+        now = world_now()
+        expires = room.reply_plans.filter(status=ReplyPlan.Status.READY, typing_at__lte=now,
+                                          reply_at__gt=now).values_list('reply_at', flat=True).first()
+        slot = routine_at(room.character, now)
+        data.update(typing_until=iso(expires), current_activity=slot.activity if slot else None)
+    return json_response(data)
+
+
+@require_POST
+@login_required_json
+def read_received(request, room_id):
+    room = get_own_room(request, room_id)
+    if room is None:
+        return error(403, '내 채팅방이 아니에요.')
+    try:
+        body = json.loads(request.body)
+    except (ValueError, UnicodeDecodeError):
+        return error(400, 'JSON 형식이 아니에요.')
+    through = body.get('through_id') if isinstance(body, dict) else None
+    if type(through) is not int or not 0 < through < 2**63:
+        return error(400, '읽은 메시지를 확인해 주세요.')
+    incoming = room.messages.filter(sender=Message.Sender.CHARACTER)
+    if not incoming.filter(pk=through).exists():
+        return error(404, '받은 메시지를 찾을 수 없어요.')
+    incoming.filter(pk__lte=through, read_at__isnull=True).update(read_at=world_now())
+    return json_response({'unread_count': incoming.filter(read_at__isnull=True).count()})
