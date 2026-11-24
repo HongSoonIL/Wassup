@@ -17,9 +17,11 @@ from django.views.decorators.http import require_GET, require_POST, require_http
 from chat.models import Friendship
 from chat.serialization import iso
 from chat.views import error, json_response, login_required_json
+from world import photo_jobs
 from world.clock import routine_at, world_now
 from world.models import FeedPost, PostPhoto, PublicationWeek
 from world.publication import ReviewError, approve, edit, issues, retry
+from world.weekly import bounded_text, due_week_start, normalized
 
 
 def operator(view):
@@ -103,6 +105,7 @@ def staff_post(post, now):
         'caption': post.caption,
         'photo_id': post.photo_id,
         'photo_alt': post.photo_alt,
+        'photo_job': photo_jobs.status_for(post),
         'event_at': iso(post.event_at),
         'publish_at': iso(post.publish_at),
         'published_at': iso(post.published_at),
@@ -141,7 +144,10 @@ def week_detail(request, week_id):
 def patch_post(request, week_id, post_id):
     data = body(request)
     revision = integer(data, 'expected_revision')
+    # Older studio clients fence edits with the week revision, which advances on every content change.
+    version = integer(data, 'version') if 'version' in data else None
     data.pop('expected_revision')
+    data.pop('version', None)
     if not data or data.keys() - {
         'state',
         'caption',
@@ -153,19 +159,21 @@ def patch_post(request, week_id, post_id):
         'publish_at',
     }:
         return error(400, '수정할 항목을 확인해 주세요.')
-    for key in ('caption', 'operator_note', 'photo_alt'):
-        if key in data and (
-            not isinstance(data[key], str) or len(data[key]) > (200 if key == 'photo_alt' else 4000)
-        ):
+    for key, limit in [('caption', 4000), ('operator_note', 4000), ('photo_alt', 200)]:
+        if key in data and not bounded_text(data[key], limit, allow_empty=key != 'caption'):
             return error(400, '글자 수와 문구를 확인해 주세요.')
     if 'state' in data and data['state'] not in ('draft', 'skipped'):
         return error(400, '편집 시 초안 또는 제외만 선택할 수 있어요.')
     if 'public_facts' in data:
         facts = data['public_facts']
-        if not isinstance(facts, list) or any(
-            not isinstance(fact, str) or not fact.strip() for fact in facts
+        if (
+            not isinstance(facts, list)
+            or not 1 <= len(facts) <= 5
+            or not all(bounded_text(fact, 500) for fact in facts)
+            or len({normalized(fact) for fact in facts}) != len(facts)
         ):
-            return error(400, '공개 사실을 문장 목록으로 입력해 주세요.')
+            return error(400, '서로 다른 공개 사실을 1~5개 입력해 주세요. 한 줄에 최대 500자예요.')
+        data['public_facts'] = [fact.strip() for fact in facts]
     for field in ('publish_at', 'event_at'):
         if field not in data:
             continue
@@ -176,16 +184,27 @@ def patch_post(request, week_id, post_id):
             data[field] = timezone.localtime(value)
         except (ValueError, TypeError, OverflowError):
             return error(400, '시간대를 포함한 사건·발행 시각을 입력해 주세요.')
-    if data.get('photo_id') is not None:
-        character_id = FeedPost.objects.values_list('character_id', flat=True).get(
-            pk=post_id, week_id=week_id
-        )
-        if (
-            not isinstance(data['photo_id'], str)
-            or not PostPhoto.objects.filter(pk=data['photo_id'], character_id=character_id).exists()
-        ):
-            return error(400, '이 캐릭터의 사진을 골라 주세요.')
-    return json_response(edit(week_id, post_id, revision, data))
+    if data.get('photo_id') is not None and not bounded_text(data['photo_id'], 50):
+        return error(400, '이 캐릭터의 사진을 골라 주세요.')
+    return json_response(edit(week_id, post_id, revision, data, version=version))
+
+
+@require_POST
+@operator
+@transaction.atomic
+def regenerate_photo(request, week_id, post_id):
+    data = body(request)
+    if data.keys() != {'expected_revision', 'version'}:
+        return error(400, 'expected_revision과 version을 보내 주세요.')
+    photo_jobs.regenerate(week_id, post_id, integer(data, 'expected_revision'), integer(data, 'version'))
+    post = FeedPost.objects.select_related('week').get(pk=post_id, week_id=week_id)
+    return json_response({
+        'revision': post.week.revision,
+        'post_id': post.pk,
+        'version': post.version,
+        'state': post.state,
+        'photo_job': photo_jobs.status_for(post),
+    }, 202)
 
 
 @require_POST
@@ -308,7 +327,18 @@ def preview(request, key):
 @operator
 @ensure_csrf_cookie
 def studio_page(request):
-    return render(request, 'dashboard/publication.html', {'page': 'studio'})
+    start = due_week_start(world_now())
+    requested = request.GET.get('week_start', '')
+    try:
+        selected = date.fromisoformat(requested)
+    except ValueError:
+        selected = None
+    if (
+        selected and selected.isoformat() == requested
+        and selected.weekday() == 0 and selected <= date.max - timedelta(days=7)
+    ):
+        start = selected
+    return render(request, 'dashboard/publication.html', {'page': 'studio', 'week_start': start.isoformat()})
 
 
 @require_GET

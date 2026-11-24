@@ -9,7 +9,7 @@
     <script type="module" src="{% static 'assets/chat.js' %}"></script>
 </head>
 <body>
-    <div id="root" data-publication="{{ page }}" data-can-publish="{{ perms.world.publish_week|yesno:'true,false' }}"></div>
+    <div id="root" data-publication="{{ page }}" {% if week_start %}data-week-start="{{ week_start }}" {% endif %}data-can-publish="{{ perms.world.publish_week|yesno:'true,false' }}"></div>
     <noscript>소식을 보려면 브라우저에서 자바스크립트를 켜 주세요.</noscript>
 </body>
 </html>

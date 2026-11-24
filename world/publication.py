@@ -15,11 +15,14 @@ from llm import weekly
 from .clock import world_now
 from .models import Character, FeedPost, PostPhoto, PostRevision, PublicationWeek
 from .weekly import (
+    KST,
     calendar_entry,
     calendar_for,
     candidates_for,
     content_keys,
     contexts_for,
+    due_week_start,
+    recent_publications,
     routines_for,
     timing_issues,
 )
@@ -131,13 +134,35 @@ def issues(post, now):
 
 
 @transaction.atomic
-def edit(week_id, post_id, revision, changes):
+def edit(week_id, post_id, revision, changes, *, version=None):
     week = locked_week(week_id, revision)
-    post = week.posts.get(pk=post_id)
+    post = week.posts.select_for_update().get(pk=post_id)
+    if version is not None and post.version != version:
+        raise ReviewError(409, 'stale_version', '현재 버전을 다시 검토해 주세요.', current_version=post.version)
     if post.state == State.PUBLISHED:
         raise ReviewError(409, 'published', '이미 발행한 게시물이에요.')
+    if 'photo_id' in changes:
+        photo = None
+        if changes['photo_id'] is not None:
+            photo = PostPhoto.objects.select_for_update().filter(
+                pk=changes['photo_id'], character_id=post.character_id
+            ).first()
+            if photo is None:
+                raise ReviewError(400, 'invalid_photo', '이 캐릭터의 사진을 골라 주세요.')
+        if changes['photo_id'] != post.photo_id and 'photo_alt' not in changes:
+            post.photo_alt = photo.alt if photo else ''
     for field, value in changes.items():
         setattr(post, field, value)
+    if changes.keys() & {'event_at', 'publish_at'}:
+        problems = timing_issues(
+            week.start, post.event_at, post.publish_at, world_now(),
+            routines_for(post.character, week.start), [calendar_entry(e) for e in post.events.all()],
+        )
+        if problems:
+            raise ReviewError(
+                422, 'invalid_timing', '사건·예약 시각과 주간 일정을 확인해 주세요.',
+                posts=[{'post_id': post.pk, 'issues': problems}],
+            )
     revise(post, changes.get('state', State.DRAFT))
     advance(week)
     return {'revision': week.revision, 'post_id': post.pk, 'version': post.version, 'state': post.state}
@@ -145,6 +170,8 @@ def edit(week_id, post_id, revision, changes):
 
 @transaction.atomic
 def approve(week_id, revision, user):
+    from .photo_jobs import status_for
+
     week = locked_week(week_id, revision)
     drafts = list(week.posts.filter(state=State.DRAFT).select_related('week', 'photo', 'character'))
     if not drafts:
@@ -153,6 +180,9 @@ def approve(week_id, revision, user):
     problems = []
     for post in drafts:
         found = issues(post, now)
+        photo_state = status_for(post)['state']
+        if photo_state in ('queued', 'generating', 'failed'):
+            found.append('photo_' + photo_state)
         if found:
             problems.append({'post_id': post.pk, 'issues': found})
     if problems:
@@ -184,6 +214,11 @@ LEASE = timedelta(seconds=2 * weekly.REQUEST_TIMEOUT + 40)
 MAX_ATTEMPTS = 2  # At most one automatic recovery for calendar changes or an abandoned claim.
 
 
+def ensure_due_week(now=None):
+    # Unique start also serializes a simultaneous studio request or another scheduler.
+    return PublicationWeek.objects.get_or_create(start=due_week_start(now or world_now()))[0]
+
+
 def available_weeks():
     return (
         PublicationWeek.objects.filter(generation='pending')
@@ -192,18 +227,22 @@ def available_weeks():
     )
 
 
+def preserve_reviewed_week(week):
+    # Legacy or externally edited plans can have an inconsistent pending flag.
+    week.generation = 'ready'
+    week.revision = max(week.revision, 1)
+    week.generation_token = week.lease_until = None
+    week.save(update_fields=['generation', 'revision', 'generation_token', 'lease_until'])
+
+
 @transaction.atomic
 def claim_week(week_id):
     week = PublicationWeek.objects.select_for_update().filter(pk=week_id).first()
     now = timezone.now()
     if week is None or week.generation != 'pending' or (week.lease_until and week.lease_until > now):
         return None
-    if week.posts.exists():
-        # Preserve all existing operator work, including a legacy week with inconsistent status.
-        week.generation = 'ready'
-        week.revision = max(week.revision, 1)
-        week.generation_token = week.lease_until = None
-        week.save()
+    if week.revision or week.posts.exists():
+        preserve_reviewed_week(week)
         return None
     if week.generation_attempts >= MAX_ATTEMPTS:
         week.generation, week.generation_error = (
@@ -239,6 +278,8 @@ def calendar_changed(week):
 
 @transaction.atomic
 def store_week(week, calendar, contexts, rows):
+    from .photo_jobs import enqueue_initial
+
     # PostgreSQL SHARE blocks all calendar writes (including previously absent rows).
     # Acquire it before the week lock to match SchoolEvent.save's invalidation order.
     with connection.cursor() as cursor:
@@ -246,9 +287,14 @@ def store_week(week, calendar, contexts, rows):
     live = current_claim(week).select_for_update().first()
     if live is None:
         return
+    if live.revision != week.revision or live.posts.exists():
+        preserve_reviewed_week(live)
+        return
     if calendar_for(week.start) != calendar:
         calendar_changed(week)
         return
+    now = world_now()
+    rows = [row for row in rows if row['event_at'] > now]
     selected_keys = {r['photo_id'] for r in rows if r['photo_id']}
     expected = {
         (asset['key'], context['character']['id'], asset['alt'])
@@ -262,7 +308,7 @@ def store_week(week, calendar, contexts, rows):
         .order_by('pk')
         .values_list('pk', 'character_id', 'alt')
     )
-    if owned != expected:
+    if owned != expected or recent_publications(week.start, now).filter(photo_id__in=selected_keys).exists():
         raise weekly.WeeklyError('사용 가능 사진이 바뀌었어요. 캐릭터의 사진을 확인하고 다시 시도해 주세요.')
     people = Character.objects.filter(pk__in=[c['character']['id'] for c in contexts]).prefetch_related(
         'routines'
@@ -270,14 +316,12 @@ def store_week(week, calendar, contexts, rows):
     current_routines = {p.pk: routines_for(p, week.start) for p in people}
     if any(current_routines.get(c['character']['id']) != c['routines'] for c in contexts):
         raise weekly.WeeklyError('캐릭터 일과가 바뀌었어요. 새 시간표로 다시 생성해 주세요.')
-    now = world_now()
-    if any(row['publish_at'] <= now for row in rows):
-        raise weekly.WeeklyError('생성 중 예약 시간이 지났어요. 현재 시각으로 다시 생성해 주세요.')
     for row in rows:
-        ids = row.pop('calendar_ids')
-        post = live.posts.create(**row)
-        post.events.add(*ids)
+        post = live.posts.create(**{key: value for key, value in row.items() if key != 'calendar_ids'})
+        post.events.add(*row['calendar_ids'])
         snapshot(post)
+        if post.photo_id is None:
+            enqueue_initial(post)
     live.generation, live.generation_error = 'ready', ''
     live.revision += 1
     live.generation_token = live.lease_until = None
@@ -290,7 +334,7 @@ def generate_week(week_id):
         return
     try:
         now = world_now()
-        if week.start + timedelta(days=7) <= timezone.localdate(now):
+        if week.start + timedelta(days=7) <= timezone.localdate(now, KST):
             raise weekly.WeeklyError(
                 '선택한 주의 발행 기간이 지났어요. 현재 또는 다음 주 계획을 열어 주세요.'
             )
@@ -303,6 +347,8 @@ def generate_week(week_id):
             if calendar_for(week.start) != calendar:
                 calendar_changed(week)
                 return
+            if context.get('candidate_limit') == 0 or not any(context['publish_windows'].values()):
+                continue
             output = weekly.propose(context)  # Network I/O runs outside all database transactions.
             rows.extend(candidates_for(context, output, world_now()))
         store_week(week, calendar, contexts, rows)

@@ -4,13 +4,14 @@ from concurrent.futures import ThreadPoolExecutor, wait
 from django.core.management.base import BaseCommand, CommandError
 from django.db import OperationalError, close_old_connections, connections
 
-from world.publication import available_weeks, dispatch_publications, generate_week
+from world.publication import available_weeks, dispatch_publications, ensure_due_week, generate_week
 
 
 def generate_batch():
     # Each worker has its own connection and runs at most one paid request at a time.
     close_old_connections()
     try:
+        ensure_due_week()
         for week_id in list(available_weeks().values_list('pk', flat=True)[:10]):
             generate_week(week_id)
     finally:
@@ -18,7 +19,7 @@ def generate_batch():
 
 
 class Command(BaseCommand):
-    help = '생성 대기 중인 주간 계획과 발행 시각이 된 게시물을 처리한다.'
+    help = '금요일 18시(한국 시각)에 다음 주 계획을 준비하고, 대기 중인 계획과 예약 게시물을 처리한다.'
 
     def add_arguments(self, parser):
         parser.add_argument('--once', action='store_true')

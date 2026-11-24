@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from django.conf import settings
 from django.core.files.storage import storages
 from django.db import models, transaction
@@ -126,3 +128,39 @@ class PostRevision(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=['post', 'version'], name='post_content_version')]
+
+
+class PhotoJob(models.Model):
+    class State(models.TextChoices):
+        QUEUED = 'queued'
+        GENERATING = 'generating'
+        READY = 'ready'
+        FAILED = 'failed'
+        DISCARDED = 'discarded'
+
+    post = models.ForeignKey(FeedPost, related_name='photo_jobs', on_delete=models.PROTECT)
+    version = models.PositiveIntegerField()
+    initial = models.BooleanField(default=False)
+    scene = models.JSONField()
+    previous_photo_id = models.CharField(max_length=50, null=True)
+    state = models.CharField(max_length=12, choices=State.choices, default=State.QUEUED)
+    detail = models.CharField(max_length=240, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True)
+    lease_until = models.DateTimeField(null=True)
+    model = models.CharField(max_length=120, blank=True)
+    elapsed_ms = models.PositiveBigIntegerField(null=True)
+    usage = models.JSONField(default=dict)
+    file_token = models.UUIDField(default=uuid4, unique=True, editable=False)
+    cleanup_pending = models.BooleanField(default=False)
+    result = models.OneToOneField(
+        PostPhoto, related_name='generation_job', on_delete=models.PROTECT, null=True
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['post'], condition=models.Q(initial=True), name='photo_initial_once_per_post'
+            )
+        ]
+        indexes = [models.Index(fields=['state', 'lease_until'])]

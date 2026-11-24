@@ -9,6 +9,7 @@ urlpatterns = [
     path('api/ops/weeks/<int:week_id>/', views.week_detail),
     path('api/ops/weeks/<int:week_id>/approve/', views.approve_week),
     path('api/ops/weeks/<int:week_id>/posts/<int:post_id>/', views.patch_post),
+    path('api/ops/weeks/<int:week_id>/posts/<int:post_id>/regenerate-photo/', views.regenerate_photo),
     path('api/ops/weeks/<int:week_id>/posts/<int:post_id>/retry/', views.retry_post),
     path('api/ops/photos/<slug:key>/', views.preview),
     path('api/feed/', views.feed),
