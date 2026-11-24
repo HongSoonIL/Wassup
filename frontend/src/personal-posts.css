@@ -1,4 +1,5 @@
 .personal-composer { display: grid; gap: 10px; min-width: 0; margin-bottom: 22px; padding: 16px 18px 12px; border: 1px solid var(--ws-line); border-radius: var(--ws-radius); background: var(--ws-surface); }
+.ws-empty + .personal-composer { margin-top: var(--ws-gap); }
 .personal-composer > label { font-size: var(--ws-body); font-weight: 650; }
 .personal-composer textarea { width: 100%; min-height: 58px; max-height: 30dvh; resize: vertical; font: inherit; line-height: 1.55; color: var(--ws-ink); }
 .personal-composer textarea::placeholder { color: #6a7562; }

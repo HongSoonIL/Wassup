@@ -1,7 +1,7 @@
 import { ReplyToPost, SectionTitle } from './PageParts'
 import { useRef, useState } from 'react'
 import type { MouseEvent, ReactNode } from 'react'
-import { ArrowUpRight, ChevronDown, Images, MessageCircle } from 'lucide-react'
+import { ArrowUpRight, ChevronDown, Images, MessageCircle, Settings2 } from 'lucide-react'
 import { getProfile } from './chat'
 import type { Profile } from './chat'
 import { FriendIdentity, PostPhoto } from './SocialMedia'
@@ -88,7 +88,10 @@ export default function ProfileBody({ profile, onChat, onQuote, children }: Prof
         if (onChat && isPlainClick(event)) { event.preventDefault(); onChat() }
       }}><MessageCircle size={17}/>대화하기<ArrowUpRight size={16}/></a>
     </section>
-    {children}
+    {children && <details className="profile-settings">
+      <summary><Settings2 size={16} aria-hidden="true"/>대화 설정과 기억<ChevronDown size={16} aria-hidden="true"/></summary>
+      {children}
+    </details>}
     <Album key={profile.id} profile={profile} onQuote={onQuote}/>
   </div>
 }

@@ -55,6 +55,14 @@
 }
 .profile-chat { margin-top: 4px; }
 .profile-chat svg:last-child { margin-left: 3px; }
+.profile-settings { margin-top: 8px; }
+.profile-settings > summary {
+  display: flex; align-items: center; gap: 7px; width: fit-content;
+  min-height: 44px; padding-inline: 4px; color: var(--ws-muted);
+  font-size: 14px; font-weight: 650; cursor: pointer; list-style: none;
+}
+.profile-settings > summary::-webkit-details-marker { display: none; }
+.profile-settings[open] > summary svg:last-child { transform: rotate(180deg); }
 .profile-section-title { display: flex; align-items: center; gap: 9px; margin: 30px 0 14px; }
 .profile-empty,.profile-error { margin: 12px 0; color: var(--ws-muted); font-size: 14px; }
 .profile-error { color: #912f22; }

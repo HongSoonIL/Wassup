@@ -245,10 +245,14 @@ function Feed({ friends }: { friends?: Friend[] }) {
 
   return <>
     <PageTitle action={<button className="feed-refresh" type="button" aria-label="피드 새로고침" disabled={busy} onClick={() => void load()}><RefreshCw size={17}/></button>}>피드</PageTitle>
+    {friends?.length === 0 &&
+      <EmptyState action={<a className="people-secondary" href="/discover/">첫 친구 만나기 <ArrowUpRight size={16}/></a>}>
+        친구를 추가하면 그 친구의 일상이 여기에 보여요.
+      </EmptyState>}
     <PersonalPostComposer onCreate={add}/>
     {error && <div role="alert" className="people-alert">{error}<button onClick={() => void retry()}>다시 시도</button></div>}
     {unavailable && <p role="status" className="people-note">이 게시물을 볼 수 없어요.</p>}
-    {page?.posts.length === 0 && <EmptyState action={<a className="people-secondary" href="/discover/">{friends?.length === 0 ? '첫 친구 만나기' : '친구 찾기'} <ArrowUpRight size={16}/></a>}>{friends?.length === 0 ? '친구를 추가하면 그 친구의 일상이 여기에 보여요.' : '아직 올라온 친구 소식이 없어요.'}</EmptyState>}
+    {page?.posts.length === 0 && friends?.length !== 0 && <EmptyState action={<a className="people-secondary" href="/discover/">친구 찾기 <ArrowUpRight size={16}/></a>}>아직 올라온 친구 소식이 없어요.</EmptyState>}
     <div className="feed-posts">{page?.posts.map(post => {
       if (post.kind === 'personal') return <PersonalPostCard key={postKey(post)} post={post} onDelete={remove}/>
       const person = people.get(post.character_id) || { name: post.name, profile_image: null }
