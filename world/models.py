@@ -5,6 +5,8 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models import F, Q
 
+from .publication_models import FeedPost, PostDependency, PostPhoto, PostRevision, PublicationWeek, SchoolEvent
+
 
 class State(models.TextChoices):
     """일과 칸에 붙는 상태. 상태마다 읽기·답장 속도가 다르다 (설계서 3.3절 표)."""

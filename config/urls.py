@@ -22,6 +22,7 @@ from django.urls import include, path
 from chat.views import chat_page
 
 urlpatterns = [
+    path('', include('dashboard.urls')),
     path('admin/', admin.site.urls),
     path('api/', include('chat.urls')),
     path('chat/<int:room_id>/', chat_page, name='chat-page'),

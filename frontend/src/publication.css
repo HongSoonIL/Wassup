@@ -1,0 +1,190 @@
+.pub {
+  background: #f6f7f1;
+  color: #263027;
+  min-height: 100dvh;
+  font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+}
+.pub header {
+  padding: 16px max(5vw, calc((100vw - 1024px) / 2));
+  border-bottom: 1px solid #dae0d5;
+  background: #fcfcf9;
+}
+.pub header a {
+  font:
+    900 34px/1 'Arial Black',
+    sans-serif;
+  letter-spacing: -2.5px;
+  text-decoration: none;
+  color: inherit;
+}
+.pub header a span {
+  color: #738f47;
+}
+.pub main {
+  max-width: 1080px;
+  padding: 32px clamp(16px, 4vw, 28px) 70px;
+  margin: auto;
+}
+.pub-title,
+.pub-by,
+.pub-actions,
+.pub-toolbar,
+.pub-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.pub-title,
+.pub-by {
+  justify-content: space-between;
+}
+.pub-title {
+  margin-bottom: 20px;
+}
+.pub-title h1 {
+  font-size: 36px;
+  font-weight: 800;
+  letter-spacing: -1.6px;
+}
+.pub-title a,
+.pub time,
+.pub small,
+.pub li {
+  color: #516552;
+  font-size: 13px;
+}
+.pub h2 {
+  font-weight: 700;
+  font-size: 21px;
+}
+.pub button,
+.pub input,
+.pub textarea,
+.pub select {
+  border: 1px solid #cbd4c6;
+  border-radius: 9px;
+  padding: 8px 12px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+}
+.pub button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+.pub button:disabled {
+  opacity: 0.5;
+}
+.pub .accent {
+  background: #daef91;
+  font-weight: 650;
+}
+.pub-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  gap: 18px;
+  align-items: start;
+}
+.pub-card {
+  border: 1px solid #d8dfd4;
+  background: #fffefb;
+  border-radius: 16px;
+  overflow: hidden;
+  max-width: 640px;
+}
+.pub-card > img {
+  width: 100%;
+  aspect-ratio: 1.7;
+  object-fit: cover;
+}
+.pub-info {
+  padding: 17px 20px;
+}
+.pub-info p {
+  margin: 10px 0;
+}
+.pub-info time {
+  margin-left: 8px;
+}
+.pub-candidate time {
+  display: block;
+  margin: 3px 0;
+}
+.pub-state {
+  background: #e9eddc;
+  border-radius: 20px;
+  font-size: 12px;
+  padding: 3px 10px;
+}
+.pub .published {
+  background: #d4e9c7;
+}
+.pub .failed,
+.pub-issue,
+.pub [role='alert'] {
+  color: #8d3526;
+}
+.pub-toolbar {
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+.pub-toolbar label {
+  font-size: 14px;
+  flex-wrap: wrap;
+}
+.pub-empty {
+  padding: 32px;
+  background: #eaf0e3;
+  border-radius: 15px;
+}
+.pub form label:not(.pub-toolbar label) {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0;
+  font-size: 13px;
+}
+.pub form textarea {
+  width: 100%;
+  min-height: 65px;
+}
+.pub-thumb {
+  max-height: 160px;
+  border-radius: 8px;
+  margin: 10px 0;
+  object-fit: cover;
+}
+.pub-sub {
+  border-top: 1px solid #d4dccc;
+  padding-top: 20px;
+}
+.pub header,
+.pub header nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.pub header nav a,
+.pub header nav button {
+  font:
+    600 13px/1.4 'Apple SD Gothic Neo',
+    'Malgun Gothic',
+    sans-serif;
+  letter-spacing: 0;
+}
+@media (max-width: 540px) {
+  .pub-grid {
+    grid-template-columns: 1fr;
+  }
+  .pub-title h1 {
+    font-size: 29px;
+  }
+  .pub-toolbar label {
+    font-size: 13px;
+  }
+  .pub main {
+    padding-top: 20px;
+  }
+}

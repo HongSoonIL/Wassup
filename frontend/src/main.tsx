@@ -5,6 +5,7 @@ import { getFriends, getMessages, mergeMessages, sendMessage } from './chat'
 import type { Friend, Message } from './chat'
 import { subscribeToRoom } from './live'
 import { sampleFriend, sampleMessages } from './preview'
+import Publication from './Publication'
 import './style.css'
 
 const root = document.getElementById('root')!
@@ -221,7 +222,7 @@ function Chat() {
   return <main className={'shell ' + (listOpen ? 'show-list' : '')}>
     <aside className="side" aria-label="대화 목록">
       <Brand/>
-      <div className="side-heading"><h2>대화</h2><span>{friends.length}</span></div>
+      <div className="side-heading"><h2>대화</h2><span>{friends.length}</span>{!demo && <a href="/feed/">친구 피드 ↗</a>}</div>
       <nav>{rows}</nav>
       {latestPhoto && <section className="side-photo"><h3>대화 속 사진</h3><button onClick={() => showPhoto(latestPhoto)}><img src={latestPhoto} alt="도현이 보내온 카페 사진"/><ZoomIn size={17}/></button></section>}
       {demo && <small className="preview-note">샘플 대화 미리보기</small>}
@@ -281,4 +282,4 @@ function Chat() {
     </dialog>
   </main>
 }
-createRoot(root).render(<Chat/>)
+createRoot(root).render(root.dataset.publication ? <Publication studio={root.dataset.publication === 'studio'} canPublish={root.dataset.canPublish === 'true'}/> : <Chat/>)

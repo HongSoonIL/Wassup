@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Character, Persona, RoutineTemplate
+from .models import Character, Persona, RoutineTemplate, SchoolEvent
 
 
 class PersonaInline(admin.StackedInline):
@@ -24,3 +24,9 @@ class CharacterAdmin(admin.ModelAdmin):
 class RoutineTemplateAdmin(admin.ModelAdmin):
     list_display = ('character', 'weekday', 'start_time', 'end_time', 'activity', 'state')
     list_filter = ('character', 'weekday', 'state')
+
+
+
+@admin.register(SchoolEvent)
+class SchoolEventAdmin(admin.ModelAdmin):
+    list_display = ('label', 'kind', 'start_date', 'end_date_exclusive', 'revision')

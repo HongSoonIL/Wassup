@@ -32,3 +32,4 @@ celerybeat.pid
 .idea/
 .DS_Store
 Thumbs.db
+/private-media/

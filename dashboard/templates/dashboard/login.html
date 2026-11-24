@@ -1,0 +1,9 @@
+{% load static %}
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>로그인 · wassup</title><link rel="stylesheet" href="{% static 'assets/chat.css' %}"></head>
+<body class="pub"><header><a href="/feed/">wassup<span>.</span></a></header><main>
+<div class="pub-title"><h1>로그인</h1></div><form method="post" class="pub-card pub-info">{% csrf_token %}
+{% if form.errors %}<p role="alert">아이디와 비밀번호를 확인해 주세요.</p>{% endif %}
+<label>아이디 {{ form.username }}</label><label>비밀번호 {{ form.password }}</label>
+<input type="hidden" name="next" value="{{ next }}"><button class="accent">로그인</button>
+</form></main></body></html>

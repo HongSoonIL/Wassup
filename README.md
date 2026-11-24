@@ -66,6 +66,25 @@ await fetch(`/api/rooms/${roomId}/messages/`, {
 2. admin의 **친구 관계(채팅방)** 에서 내 계정과 도현을 친구로 추가한다.
 3. 같은 브라우저에서 `/api/friends/`와 `/api/rooms/{id}/messages/`를 연다.
 
+## 주간 승인과 실제 친구 피드
+
+Django의 `/studio/`에서 일주일의 후보를 검토해 묶음 승인하고, `/feed/`에서 로그인한 사용자의 친구가 발행한 소식을 읽는다. 두 화면 모두 `/login/`에서 같은 세션으로 로그인한다. DB 연결과 마이그레이션을 준비한 뒤 아래 명령을 실행한다.
+
+```sh
+python manage.py migrate
+python manage.py seed_world
+python manage.py seed_publication
+(cd frontend && pnpm install --frozen-lockfile && pnpm build)
+python manage.py runserver
+```
+
+별도 터미널에서 `python manage.py run_publication_worker`를 실행한다. `--once`는 대기 중인 주간 생성과 시각이 된 발행을 한 차례 처리한다. 운영 계정은 superuser 또는 `world.publish_week` 권한이 있는 사용자다. 일반 계정은 Django admin에서 도현이나 서윤과 친구 관계를 맺은 뒤 피드를 확인한다.
+
+- **주간 계획.** 운영자가 월요일을 선택해 열면 워커가 가상 학교 달력으로 후보를 만든다. 첫 구현은 시험·체육대회·방학·평상시의 고정 문구와 기존 사진을 사용한다. 시드는 2027년 4월 19일 주간의 중간고사와 체육대회를 포함한다. 다른 주의 행사는 admin의 School events에서 등록한다.
+- **운영 검토.** 사진 없는 후보는 수정하거나 제외한 뒤 승인한다. 실제 시계 기준 과거 시각은 승인할 수 없다. 일정 변경 시 해당 행사를 참조하는 미발행 후보만 재검토하며, 실패한 사진은 자산 복구 후 같은 카드에서 재시도한다.
+- **공개.** 친구 관계와 발행 성공 시각을 확인한 후 피드·프로필 API·사진을 제공한다. 발행 사진은 `POST_PHOTO_DIR`(기본 `private-media/`)에 보관한다. 웹 서버에서 이 디렉터리를 정적 경로로 공개하지 않는다. 새로고침이나 탭 복귀로 최신 피드를 읽는다.
+- **검증.** PostgreSQL에서 `python manage.py test dashboard.test_publication`으로 두 계정의 접근 범위, 일정 변경, 동시 승인·중복 실행, 오류 후 재시도를 확인한다. 이후 사진 인용 대화와 모델 연결의 계약은 [시험 주간 통합 설계](docs/design/exam-week.md)에 있다.
+
 ## 첫 베타 화면 시안
 
 `frontend`에서 `pnpm install --frozen-lockfile`과 `pnpm dev`를 실행하고 `/design.html`을 연다. 친구 홈·프로필·피드·채팅과 운영 스튜디오가 도현·서윤의 같은 하루를 사용한다. 새로고침하면 샘플이 초기화된다. 검토 시각, 계정 전환과 예약 발행 재현 방법은 [첫 베타 제품 설계](docs/design/first-beta.md)에 있다.
