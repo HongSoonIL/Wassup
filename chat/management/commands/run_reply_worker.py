@@ -6,6 +6,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import OperationalError, close_old_connections, connections
 
 from chat.replies import dispatch_due, prepare_next_reply
+from config.llm import model_for
 
 
 def prepare():
@@ -28,8 +29,8 @@ class Command(BaseCommand):
             raise CommandError('--interval must be greater than 0 and at most 60 seconds.')
         if settings.LLM_BACKEND not in ('fake', 'openai'):
             raise CommandError('LLM_BACKEND must be fake or openai.')
-        if settings.LLM_BACKEND == 'openai' and not (settings.LLM_MODEL and settings.LLM_API_KEY):
-            raise CommandError('Set LLM_MODEL and LLM_API_KEY to use the OpenAI backend.')
+        if settings.LLM_BACKEND == 'openai' and not (model_for('chat') and settings.LLM_API_KEY):
+            raise CommandError('Set LLM_CHAT_MODEL or LLM_MODEL, and LLM_API_KEY to use the OpenAI backend.')
         executor = ThreadPoolExecutor(max_workers=1)
         generation = None
         self.stdout.write('Reply worker started.')

@@ -4,6 +4,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import OperationalError, close_old_connections
 
+from config.llm import model_for
 from memory.extraction import process_next
 
 
@@ -20,8 +21,8 @@ class Command(BaseCommand):
             raise CommandError('--interval must be greater than 0 and at most 60 seconds.')
         if settings.LLM_BACKEND not in ('fake', 'openai'):
             raise CommandError('LLM_BACKEND must be fake or openai.')
-        if settings.LLM_BACKEND == 'openai' and not (settings.LLM_MODEL and settings.LLM_API_KEY):
-            raise CommandError('Set LLM_MODEL and LLM_API_KEY for the OpenAI backend.')
+        if settings.LLM_BACKEND == 'openai' and not (model_for('memory') and settings.LLM_API_KEY):
+            raise CommandError('Set LLM_MEMORY_MODEL or LLM_MODEL, and LLM_API_KEY for the OpenAI backend.')
         while True:
             close_old_connections()
             try:

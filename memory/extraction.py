@@ -15,6 +15,7 @@ from django.db.models import F, Q
 from django.utils import timezone
 
 from chat.models import Message
+from config.llm import model_options
 from memory import services
 from memory.models import MemoryJob
 
@@ -170,10 +171,11 @@ def fake_candidates(clauses):
 
 
 def responses_candidates(clauses, base):
-    if settings.LLM_BACKEND != 'openai' or not settings.LLM_API_KEY or not settings.LLM_MODEL:
+    options = model_options('memory')
+    if settings.LLM_BACKEND != 'openai' or not settings.LLM_API_KEY or not options['model']:
         raise ExtractionError('Invalid extraction backend configuration.')
     payload = {
-        'model': settings.LLM_MODEL, 'store': False, 'max_output_tokens': 1500,
+        **options, 'store': False, 'max_output_tokens': 1500,
         'instructions': INSTRUCTIONS,
         'input': json.dumps({'kst_date': base.isoformat(), 'statements': clauses}, ensure_ascii=False),
         'text': {'format': {'type': 'json_schema', 'name': 'memory_candidates', 'strict': True, 'schema': SCHEMA}},

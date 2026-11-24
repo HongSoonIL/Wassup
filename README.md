@@ -91,7 +91,9 @@ python manage.py runserver
 
 친구 계정으로 `/feed/`에서 사진이나 ‘말 걸기’를 누르면 기존 방의 입력창에 그 게시물이 붙는다. 전송 전에는 인용을 해제할 수 있다. 헤더의 이름·사진 또는 말풍선 옆 얼굴을 누르면 그 친구의 프로필과 공개 사진을 볼 수 있다.
 
-웹 서버와 별도 터미널에서 `python manage.py run_reply_worker`를 실행한다. 기본값 `LLM_BACKEND=fake`에서는 키 없이 검수된 샘플 문구를 사용한다. 실제 모델을 쓰려면 서버의 `.env`에 `LLM_BACKEND=openai`, `LLM_MODEL`(구조화 출력을 지원하는 모델 ID), `LLM_API_KEY`를 설정하고 웹 서버와 답장·발행 워커를 재시작한다. 로컬 시연의 `WASSUP_REPLY_DEMO_SECONDS`는 모델 호출 시간을 확보하려면 0으로 되돌린다.
+웹 서버와 별도 터미널에서 `python manage.py run_reply_worker`를 실행한다. 기본값 `LLM_BACKEND=fake`에서는 키 없이 검수된 샘플 문구를 사용한다. 실제 모델을 쓰려면 서버의 `.env`에 `LLM_BACKEND=openai`, `LLM_MODEL`(구조화 출력을 지원하는 공통 모델 ID), `LLM_API_KEY`를 설정한다. 채팅·기억 추출·주간 발행의 모델은 각각 `LLM_CHAT_MODEL`, `LLM_MEMORY_MODEL`, `LLM_WEEKLY_MODEL`로 덮어쓸 수 있다. 같은 접두사의 `_EFFORT`에 모델이 지원하는 추론 강도를 넣거나, 모델 기본값을 쓰려면 비워 둔다. 설정을 바꾼 뒤 웹 서버와 해당 워커를 재시작한다. 일과에 맞춘 읽음·발송 시각을 사용하려면 `WASSUP_REPLY_DEMO_SECONDS=0`으로 둔다.
+
+베타의 채팅과 기억 추출 설정은 `.env.example`에 있다. 기존 `.env`에 적용하려면 `LLM_CHAT_MODEL=gpt-6.2-sol`, `LLM_MEMORY_MODEL=gpt-6-luna`와 두 기능의 `_EFFORT=low`를 추가한다. 친구별 기억은 사용자가 해당 방에서 켜야 시작한다.
 
 답장 워커는 해당 방의 한국 시각 기준 당일 메시지 중 최근 16개, 캐릭터 설정·현재 일과, 최근 공개 게시물 최대 4건 및 인용한 공개본을 텍스트로 보낸다. 호출은 `store: false`로 구성한다. 공급자 오류나 발송 기한 초과 시 검수된 답장을 보낸다. 여러 말풍선은 한 번에 생성한 뒤 서버가 하나씩 전송한다. 상대가 중간에 메시지를 보내면 남은 말풍선을 취소하고 이미 도착한 대화에 이어서 답한다. [OpenAI Responses API](https://developers.openai.com/api/reference/resources/responses/methods/create)
 

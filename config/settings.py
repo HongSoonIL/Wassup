@@ -174,4 +174,10 @@ STORAGES = {
 
 LLM_BACKEND = os.environ.get('LLM_BACKEND', 'fake')
 LLM_MODEL = os.environ.get('LLM_MODEL', '')
+LLM_CHAT_MODEL = os.environ.get('LLM_CHAT_MODEL', '')
+LLM_CHAT_EFFORT = os.environ.get('LLM_CHAT_EFFORT', '')
+LLM_MEMORY_MODEL = os.environ.get('LLM_MEMORY_MODEL', '')
+LLM_MEMORY_EFFORT = os.environ.get('LLM_MEMORY_EFFORT', '')
+LLM_WEEKLY_MODEL = os.environ.get('LLM_WEEKLY_MODEL', '')
+LLM_WEEKLY_EFFORT = os.environ.get('LLM_WEEKLY_EFFORT', '')
 LLM_API_KEY = os.environ.get('LLM_API_KEY') or os.environ.get('OPENAI_API_KEY', '')

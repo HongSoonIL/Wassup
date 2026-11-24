@@ -13,7 +13,8 @@ from llm.dialogue import context_for
 from world.models import Character, FeedPost, Persona, PublicationWeek
 
 
-@override_settings(LLM_BACKEND='openai', LLM_API_KEY='test-only', LLM_MODEL='test-model')
+@override_settings(LLM_BACKEND='openai', LLM_API_KEY='test-only', LLM_MODEL='test-model',
+                   LLM_CHAT_MODEL='', LLM_CHAT_EFFORT='')
 class QuotedConversationTests(TestCase):
     @classmethod
     def setUpTestData(cls):
@@ -116,6 +117,7 @@ class QuotedConversationTests(TestCase):
             self.client.get(url).json()['messages'][1]['source_post'], {'status': 'unavailable'}
         )
 
+    @override_settings(LLM_CHAT_MODEL='gpt-6.2-sol', LLM_CHAT_EFFORT='low')
     def test_responses_request_uses_only_current_room_and_published_facts(self):
         Message.objects.create(room=self.peer_room, sender='user', text='다른 사용자 618')
         Message.objects.create(room=self.other_room, sender='user', text='다른 친구 217')
@@ -134,7 +136,7 @@ class QuotedConversationTests(TestCase):
                     'content': [
                         {
                             'type': 'output_text',
-                            'text': json.dumps({'bubbles': ['주황이 좋더라', '같이 뽑아 보길 잘했어'],
+                            'text': json.dumps({'bubbles': ['**주황**이 좋더라', '같이 뽑아 보길 잘했어'],
                                                 'used_memory_ids': []}),
                         }
                     ],
@@ -148,6 +150,8 @@ class QuotedConversationTests(TestCase):
         request = transport.call_args.args[0]
         self.assertEqual(request.full_url, 'https://api.openai.com/v1/responses')
         body = json.loads(request.data)
+        self.assertEqual(body['model'], 'gpt-6.2-sol')
+        self.assertEqual(body['reasoning'], {'effort': 'low'})
         self.assertFalse(body['store'])
         self.assertTrue(body['text']['format']['strict'])
         context = json.loads(body['input'])
@@ -173,7 +177,7 @@ class QuotedConversationTests(TestCase):
             list(self.room.messages.filter(sender='character').values_list('text', flat=True)),
             ['주황이 좋더라', '같이 뽑아 보길 잘했어'],
         )
-        self.assertEqual(plan.model_name, 'test-model')
+        self.assertEqual(plan.model_name, 'gpt-6.2-sol')
 
     def test_a_short_question_can_have_one_model_bubble_for_seoyun(self):
         accept_message(self.room.pk, '무슨 색으로 골랐어?', self.post.pk)

@@ -14,10 +14,11 @@ from chat.live import publish_room_events
 from chat.models import Friendship, Message, ReplyBubble, ReplyPlan
 from chat.reply_timing import CONVERSATION_WINDOW, PHONE_OPEN_WINDOW, ReplyTiming, followup_timing, plan_reply
 from chat.serialization import iso, message_json
+from config.llm import model_for
+from llm.dialogue import context_for, fake_reply, openai_reply, sample_reply
 from memory.services import enqueue, history_floor, memory_revision
 from world.clock import world_now
 from world.publication import published_posts
-from llm.dialogue import context_for, fake_reply, openai_reply, sample_reply
 
 
 BEFORE_FIRST = (ReplyPlan.Status.PLANNED, ReplyPlan.Status.READ, ReplyPlan.Status.READY)
@@ -263,7 +264,7 @@ def prepare_next_reply():
             result, model_name = fake_reply(context), 'sample'
         else:
             result = openai_reply(context)
-            model_name = settings.LLM_MODEL[: ReplyPlan._meta.get_field('model_name').max_length]
+            model_name = model_for('chat')[: ReplyPlan._meta.get_field('model_name').max_length]
     except (HTTPException, OSError, ValueError, KeyError, TypeError, RecursionError) as exc:
         logging.getLogger(__name__).warning(
             'Dialogue generation failed for reply plan %s (%s, HTTP %s)',

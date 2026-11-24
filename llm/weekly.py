@@ -8,6 +8,8 @@ from urllib.request import Request, urlopen
 
 from django.conf import settings
 
+from config.llm import model_options
+
 
 class WeeklyError(Exception):
     """A fixed operator-facing explanation safe to persist and display."""
@@ -75,9 +77,8 @@ def propose(context):
         return sample_week(context)
     if settings.LLM_BACKEND != 'openai' or not settings.LLM_API_KEY:
         raise WeeklyError('서버의 LLM_BACKEND와 OpenAI 키 설정을 확인한 뒤 다시 시도해 주세요.')
-    model = settings.LLM_MODEL or 'gpt-5.4-mini'
     payload = {
-        'model': model,
+        **model_options('weekly'),
         'store': False,
         'max_output_tokens': 2400,
         'instructions': INSTRUCTIONS,
@@ -128,7 +129,7 @@ def propose(context):
     usage = result.get('usage') or {}
     logging.getLogger(__name__).info(
         'weekly.v1 model=%s elapsed_ms=%d input_tokens=%s output_tokens=%s',
-        model,
+        payload['model'],
         round((monotonic() - started) * 1000),
         usage.get('input_tokens'),
         usage.get('output_tokens'),

@@ -65,7 +65,8 @@ class WeeklyGenerationTests(TransactionTestCase):
             published_at=when,
         )
 
-    @override_settings(LLM_BACKEND='openai', LLM_API_KEY='unused-test-value')
+    @override_settings(LLM_BACKEND='openai', LLM_API_KEY='unused-test-value',
+                       LLM_WEEKLY_MODEL='weekly-test', LLM_WEEKLY_EFFORT='medium')
     def test_strict_requests_use_only_authorized_preceding_four_weeks(self):
         beginning = NOW.replace(hour=0) - timedelta(weeks=4)
         self.history(self.first, beginning, 'included-boundary')
@@ -84,7 +85,8 @@ class WeeklyGenerationTests(TransactionTestCase):
             self.assertFalse(connection.in_atomic_block)
             self.assertEqual(request.full_url, 'https://api.openai.com/v1/responses')
             payload = json.loads(request.data)
-            self.assertEqual(payload['model'], 'gpt-5.4-mini')
+            self.assertEqual(payload['model'], 'weekly-test')
+            self.assertEqual(payload['reasoning'], {'effort': 'medium'})
             self.assertIs(payload['store'], False)
             form = payload['text']['format']
             self.assertIs(form['strict'], True)

@@ -95,6 +95,7 @@ class ExtractionTests(SimpleTestCase):
 
 @override_settings(LLM_BACKEND='openai', LLM_MODEL='test-model', LLM_API_KEY='unit-test-key')
 class ResponsesTests(SimpleTestCase):
+    @override_settings(LLM_MODEL='', LLM_MEMORY_MODEL='gpt-6-luna', LLM_MEMORY_EFFORT='low')
     def test_real_adapter_accepts_novel_topic_using_verbatim_evidence(self):
         source = '난 요즘 유자 크림 소금빵을 제일 좋아해 ㅎㅎ'
         row = dict(kind='preference', category='food', subject='self', certainty='stated',
@@ -106,6 +107,8 @@ class ResponsesTests(SimpleTestCase):
         self.assertEqual(request.full_url, 'https://api.openai.com/v1/responses')
         self.assertEqual(open_mock.call_args.kwargs, {'timeout': extraction.REQUEST_TIMEOUT})
         body = json.loads(request.data)
+        self.assertEqual(body['model'], 'gpt-6-luna')
+        self.assertEqual(body['reasoning'], {'effort': 'low'})
         self.assertIs(body['store'], False)
         self.assertIs(body['text']['format']['strict'], True)
         self.assertEqual(json.loads(body['input']), {'kst_date': '2027-04-20', 'statements': [source]})

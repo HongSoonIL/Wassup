@@ -1,13 +1,31 @@
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
 
 from chat.models import Friendship
 from chat.replies import accept_message
 from llm.dialogue import context_for
+from config.llm import model_options
 from world.models import Character, FeedPost, PublicationWeek
+
+
+@override_settings(LLM_MODEL='shared', LLM_CHAT_MODEL='', LLM_CHAT_EFFORT='', LLM_MEMORY_MODEL='',
+                   LLM_MEMORY_EFFORT='', LLM_WEEKLY_MODEL='', LLM_WEEKLY_EFFORT='')
+class ModelConfigurationTests(SimpleTestCase):
+    def test_legacy_settings_leave_reasoning_unspecified(self):
+        for purpose in ('chat', 'memory', 'weekly'):
+            self.assertEqual(model_options(purpose), {'model': 'shared'})
+        with self.settings(LLM_MODEL=''):
+            self.assertEqual(model_options('weekly'), {'model': 'gpt-5.4-mini'})
+
+    @override_settings(LLM_CHAT_MODEL='sol', LLM_CHAT_EFFORT='low', LLM_MEMORY_MODEL='luna',
+                       LLM_WEEKLY_EFFORT='medium')
+    def test_each_worker_uses_its_own_model_and_effort(self):
+        self.assertEqual(model_options('chat'), {'model': 'sol', 'reasoning': {'effort': 'low'}})
+        self.assertEqual(model_options('memory'), {'model': 'luna'})
+        self.assertEqual(model_options('weekly'), {'model': 'shared', 'reasoning': {'effort': 'medium'}})
 
 
 class PublishedEventTimeTests(TestCase):
