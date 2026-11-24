@@ -7,11 +7,11 @@ from unicodedata import normalize
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
-from django.db.models import Q
+from django.db.models import F, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from llm.weekly import FIELDS, WeeklyError
+from llm.weekly import FIELDS, WeeklyError, previous_versions
 from .models import Character, FeedPost, PostPhoto, SchoolEvent
 
 
@@ -93,6 +93,18 @@ def recent_publications(start, now):
     )
 
 
+def previous_candidates(post, now):
+    return (
+        recent_publications(post.week.start, now)
+        .filter(
+            character_id=post.character_id,
+            published_at__lt=post.published_at or post.publish_at,
+            photo__character_id=F('character_id'),
+        )
+        .exclude(Q(pk=post.pk) | Q(photo__image=''))
+    )
+
+
 def weekly_capacity(start, person, calendar, routines, recent_count):
     """A reproducible editorial ceiling, with more quiet draws during exams."""
     days = [(start + timedelta(days=offset)).isoformat() for offset in range(7)]
@@ -134,7 +146,9 @@ def contexts_for(start, calendar, now):
     contexts = []
     for p in people:
         routines = routines_for(p, start)
-        history = list(recent_publications(start, now).filter(character=p).order_by('published_at', 'pk'))
+        history = list(
+            recent_publications(start, now).filter(character=p).select_related('photo').order_by('published_at', 'pk')
+        )
         # Generated job outputs belong to one event. Editors can still select them manually.
         assets = list(PostPhoto.objects.filter(character=p, generation_job__isnull=True)
                       .order_by('pk').values('key', 'alt'))
@@ -162,11 +176,15 @@ def contexts_for(start, calendar, now):
                 'assets': [asset for asset in assets if asset['key'] not in previous_photos],
                 'recent_posts': [
                     {
+                        'id': post.pk,
+                        'version': post.version,
                         'event_at': timezone.localtime(post.event_at, KST).isoformat() if post.event_at else None,
                         'published_at': timezone.localtime(post.published_at, KST).isoformat(),
                         'public_facts': post.public_facts,
                         'caption': post.caption,
-                        'asset_key': post.photo_id,
+                        'asset_key': post.photo_id if (
+                            post.photo_id and post.photo.character_id == p.pk and post.photo.image
+                        ) else None,
                         'photo_alt': post.photo_alt if post.photo_id else '',
                     }
                     for post in history
@@ -266,6 +284,7 @@ def candidates_for(context, output, now):
         invalid(f'이번 주 후보는 0~{limit}개까지 가능해요.')
     events = {e['id']: e for e in context['school_calendar']}
     assets = {p['key']: p['alt'] for p in context['assets']}
+    earlier_versions = previous_versions(context)
     seen = set()
     for past in context['recent_posts']:
         seen.update(content_keys(past['caption'], past['public_facts']))
@@ -273,7 +292,7 @@ def candidates_for(context, output, now):
     used_assets = set()
     result = []
     for row in rows:
-        if not isinstance(row, dict) or row.keys() != FIELDS.keys():
+        if not isinstance(row, dict) or (row.keys() | {'previous_post_id'}) != FIELDS.keys():
             invalid('필수 항목을 확인할 수 없어요.')
         owner = row['character_id']
         if type(owner) is not int or owner != context['character']['id']:
@@ -336,6 +355,8 @@ def candidates_for(context, output, now):
         texts = [normalized(text) for text in [caption, *facts, alt]]
         if len(texts) != len(set(texts)):
             invalid('공개 사실·피드 문구·사진 설명을 각각 써 주세요.')
+        previous_id = row.get('previous_post_id')
+        previous_version = earlier_versions.get(previous_id) if type(previous_id) is int else None
         result.append(
             {
                 'character_id': owner,
@@ -347,6 +368,8 @@ def candidates_for(context, output, now):
                 'photo_id': key,
                 'photo_alt': alt.strip(),
                 'operator_note': note.strip(),
+                'previous_post_id': previous_id if previous_version is not None else None,
+                'previous_version': previous_version,
             }
         )
     # A standing activity can recur. Avoid replaying a whole multi-post timetable.

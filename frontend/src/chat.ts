@@ -1,8 +1,15 @@
 export type Quote = { status: 'available'; id: number; version: number; caption: string; photo_url: string; photo_alt: string } | { status: 'unavailable' }
+export type PostSummary = {
+  id: number
+  version: number
+  caption: string
+  published_at: string
+  photo: { url: string; alt: string }
+}
 export type Profile = {
   id: number; room_id: number; name: string; profile_image: string | null
   status_message: string; current_activity: string | null; next_cursor: string | null
-  posts: {id: number; version: number; caption: string; published_at: string; photo: {url:string; alt:string; ai_generated:boolean}}[]
+  posts: (PostSummary & { photo: { ai_generated: boolean }; previous_post?: PostSummary | null })[]
 }
 
 export type Message = {
@@ -108,6 +115,10 @@ export function getMessages(room: number, before?: number) {
 
 export function getProfile(characterId: number, cursor?: string) {
   return request<Profile>('/api/characters/' + characterId + '/profile/' + (cursor ? '?cursor=' + encodeURIComponent(cursor) : ''))
+}
+
+export function getPreviousPost(id: number, version: number, signal: AbortSignal) {
+  return request<{ previous_post: PostSummary | null }>(`/api/posts/${id}/previous/?version=${version}`, { signal })
 }
 
 export function markRead(room: number, through: number) {

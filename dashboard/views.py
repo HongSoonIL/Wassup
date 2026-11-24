@@ -15,13 +15,14 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
 from chat.models import Friendship
-from chat.serialization import iso
+from chat.serialization import iso, readable_photo
 from chat.views import error, json_response, login_required_json
 from world import photo_jobs
 from world.clock import routine_at, world_now
 from world.models import FeedPost, PostPhoto, PublicationWeek
+from world.post_links import current_previous
 from world.publication import ReviewError, approve, edit, issues, retry
-from world.weekly import bounded_text, due_week_start, normalized
+from world.weekly import bounded_text, due_week_start, normalized, previous_candidates
 
 
 def operator(view):
@@ -92,6 +93,20 @@ def generate(request):
 
 
 def staff_post(post, now):
+    candidates = [
+        {
+            'id': previous.pk,
+            'version': previous.version,
+            'caption': previous.caption,
+            'published_at': iso(previous.published_at),
+            'photo': {'url': f'/api/ops/photos/{previous.photo_id}/', 'alt': previous.photo_alt},
+        }
+        for previous in previous_candidates(post, now).order_by('-published_at', '-pk')
+    ]
+    selected = next(
+        (c for c in candidates if (c['id'], c['version']) == (post.previous_post_id, post.previous_version)),
+        None,
+    )
     return {
         'post_id': post.pk,
         'version': post.version,
@@ -105,6 +120,8 @@ def staff_post(post, now):
         'caption': post.caption,
         'photo_id': post.photo_id,
         'photo_alt': post.photo_alt,
+        'previous_post': selected,
+        'previous_candidates': candidates,
         'photo_job': photo_jobs.status_for(post),
         'event_at': iso(post.event_at),
         'publish_at': iso(post.publish_at),
@@ -157,6 +174,7 @@ def patch_post(request, week_id, post_id):
         'operator_note',
         'event_at',
         'publish_at',
+        'previous_post',
     }:
         return error(400, '수정할 항목을 확인해 주세요.')
     for key, limit in [('caption', 4000), ('operator_note', 4000), ('photo_alt', 200)]:
@@ -186,6 +204,12 @@ def patch_post(request, week_id, post_id):
             return error(400, '시간대를 포함한 사건·발행 시각을 입력해 주세요.')
     if data.get('photo_id') is not None and not bounded_text(data['photo_id'], 50):
         return error(400, '이 캐릭터의 사진을 골라 주세요.')
+    previous = data.get('previous_post')
+    if previous is not None:
+        if not isinstance(previous, dict) or previous.keys() != {'id', 'version'}:
+            return error(400, '이전 글의 id와 version을 보내 주세요.')
+        for field in ('id', 'version'):
+            integer(previous, field)
     return json_response(edit(week_id, post_id, revision, data, version=version))
 
 
@@ -236,9 +260,10 @@ def page(request, posts):
         except signing.BadSignature:
             raise ReviewError(400, 'invalid_cursor', '페이지 위치를 확인해 주세요.')
         posts = posts.filter(Q(published_at__lt=at) | Q(published_at=at, pk__lt=pk))
-    rows = list(posts.order_by('-published_at', '-pk')[:31])
+    rows = list(posts.select_related('previous_post__photo').order_by('-published_at', '-pk')[:31])
     more = len(rows) > 30
     rows = rows[:30]
+    now = world_now()
     return {
         'posts': [
             {
@@ -248,6 +273,7 @@ def page(request, posts):
                 'name': p.character.name,
                 'published_at': iso(p.published_at),
                 'caption': p.caption,
+                'previous_post': public_previous(p, now),
                 'photo': {
                     'url': f'/api/posts/{p.pk}/photo/',
                     'alt': p.photo_alt,
@@ -300,6 +326,43 @@ def profile(request, character_id):
     )
 
 
+def public_previous(post, now):
+    previous = current_previous(post, now)
+    if previous is None or not readable_photo(previous.photo):
+        return None
+    return {
+        'id': previous.pk,
+        'version': previous.version,
+        'caption': previous.caption,
+        'published_at': iso(previous.published_at),
+        'photo': {
+            'url': f'/api/posts/{previous.pk}/photo/?version={previous.version}',
+            'alt': previous.photo_alt,
+        },
+    }
+
+
+def versioned(posts, request, *, required=False):
+    versions = request.GET.getlist('version')
+    if not versions and not required:
+        return posts
+    if len(versions) != 1:
+        raise Http404
+    version = versions[0]
+    if not (version.isascii() and version.isdecimal() and len(version) <= 10 and 0 < int(version) < 2**31):
+        raise Http404
+    return posts.filter(version=int(version))
+
+
+@require_GET
+@never_cache
+@login_required_json
+def previous_post(request, post_id):
+    posts = visible(request.user).select_related('previous_post__photo')
+    post = get_object_or_404(versioned(posts, request, required=True), pk=post_id)
+    return json_response({'previous_post': public_previous(post, world_now())})
+
+
 def image_response(photo):
     try:
         stream = photo.image.open('rb')
@@ -313,15 +376,7 @@ def image_response(photo):
 @login_required_json
 def photo(request, post_id):
     posts = visible(request.user).filter(photo__character_id=F('character_id'))
-    versions = request.GET.getlist('version')
-    if versions:
-        version = versions[0]
-        if len(versions) != 1 or not (
-            version.isascii() and version.isdecimal() and len(version) <= 10 and 0 < int(version) < 2**31
-        ):
-            raise Http404
-        posts = posts.filter(version=int(version))
-    return image_response(get_object_or_404(posts, pk=post_id).photo)
+    return image_response(get_object_or_404(versioned(posts, request), pk=post_id).photo)
 
 
 @require_GET

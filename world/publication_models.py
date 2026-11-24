@@ -93,6 +93,8 @@ class FeedPost(models.Model):
     operator_note = models.TextField(blank=True)
     photo = models.ForeignKey(PostPhoto, null=True, on_delete=models.PROTECT)
     photo_alt = models.CharField(max_length=200, blank=True)
+    previous_post = models.ForeignKey('self', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    previous_version = models.PositiveIntegerField(null=True, blank=True)
     # Earlier reviewed posts have no recorded event time.
     event_at = models.DateTimeField(null=True, blank=True)
     publish_at = models.DateTimeField()

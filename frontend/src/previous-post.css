@@ -1,0 +1,25 @@
+.previous-post { min-width: 0; margin-top: 8px; border-top: 1px solid var(--ws-line); }
+.previous-post-toggle,
+.previous-post-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 44px;
+  padding: 0;
+  color: var(--ws-muted);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: start;
+}
+.previous-post-toggle { justify-content: space-between; width: 100%; }
+.previous-post-toggle:hover,
+.previous-post-inline:hover { text-decoration: underline; text-underline-offset: 3px; }
+.previous-post-panel { margin-bottom: 8px; border-radius: 12px; background: var(--ws-paper); }
+.previous-post-status { margin: 0; padding: 12px; color: var(--ws-muted); font-size: 13px; }
+.previous-post-panel > .previous-post-inline { margin-inline: 12px; }
+.previous-post-panel .previous-post-photo { width: 100%; aspect-ratio: 1.55; border-radius: 12px 12px 0 0; }
+.previous-post-copy { padding: 10px 12px 0; }
+.previous-post-copy time { color: var(--ws-muted); font-size: 12px; }
+.previous-post-copy p { margin: 4px 0 0; color: var(--ws-ink); font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.profile-post > .previous-post { grid-column: 1 / -1; margin: 0 12px; }

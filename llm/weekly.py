@@ -27,6 +27,9 @@ INSTRUCTIONS = """한국 대학생인 이 캐릭터의 한 주를 준비하는 �
 서윤의 모든 글을 ㅠㅠ로 끝내거나 도현의 모든 글에 ㅋㅋ를 붙이지 않는다. 조용한 관찰이나 담백한 문장도 어울린다.
 public_facts에는 나중에 대화할 수 있게 누가 무엇을 하거나 골랐는지와 그 결과를 구체적으로 적는다.
 caption에는 이 친구가 직접 쓴 짧은 글을 넣는다. public_facts, caption, photo_alt를 서로 복사하지 않는다.
+previous_post_id는 recent_posts에 있는 같은 사람의 글에 이어 실제로 새 진전이나 결과가 생긴 경우에만 쓴다.
+예를 들어 지난 글에서 고른 포스터 색으로 이번 주에 최종본을 인쇄했다면 이전 글을 연결할 수 있다.
+같은 고양이·장소·소재가 다시 나온 것만으로는 연결하지 않는다. 이전 사건의 진전이나 결과가 없으면 null을 쓴다.
 event_at과 publish_at은 해당 주 한국 시간대(+09:00)의 ISO 일시로 쓴다. 먼저 사건 시각을 정하고
 그 뒤에 오는 발행 가능 구간에서 예약한다. 예를 들어 13:10에 끝난 일은 같은 날 12:40에 올릴 수 없다.
 반드시 now < event_at < publish_at이어야 한다. 이미 지난 사건과 발행 시각은 제외한다.
@@ -54,17 +57,27 @@ FIELDS = {
     'asset_key': {'type': ['string', 'null']},
     'photo_alt': {'type': 'string'},
     'editor_note': {'type': 'string'},
+    'previous_post_id': {'type': ['integer', 'null']},
 }
 REQUEST_TIMEOUT = 40
 
 
-def weekly_schema(calendar, assets, candidate_limit=3):
+def previous_versions(context):
+    return {
+        past['id']: past['version']
+        for past in context.get('recent_posts', [])
+        if past.get('asset_key') and type(past.get('id')) is int and type(past.get('version')) is int
+    }
+
+
+def weekly_schema(calendar, assets, candidate_limit=3, previous_ids=()):
     ids = [event['id'] for event in calendar]
     item = {'type': 'integer', 'enum': ids} if ids else {'type': 'integer'}
     fields = {
         **FIELDS,
         'calendar_ids': {'type': 'array', 'items': item, 'maxItems': len(ids)},
         'asset_key': {'type': ['string', 'null'], 'enum': [asset['key'] for asset in assets] + [None]},
+        'previous_post_id': {**FIELDS['previous_post_id'], 'enum': [*previous_ids, None]},
     }
     candidate = {'type': 'object', 'properties': fields, 'required': list(fields),
                  'additionalProperties': False}
@@ -92,8 +105,10 @@ def propose(context):
         'input': json.dumps(context, ensure_ascii=False),
         'text': {
             'format': {'type': 'json_schema', 'name': 'weekly_candidates', 'strict': True,
-                       'schema': weekly_schema(context.get('school_calendar', []), context.get('assets', []),
-                                               context.get('candidate_limit', 3))}
+                       'schema': weekly_schema(
+                           context.get('school_calendar', []), context.get('assets', []),
+                           context.get('candidate_limit', 3), previous_versions(context),
+                       )}
         },
     }
     request = Request(

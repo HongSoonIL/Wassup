@@ -3,11 +3,12 @@ import type { MouseEvent } from 'react'
 import { ArrowUpRight, CalendarDays, Check, ChevronDown, HeartHandshake, Image as ImageIcon, MessageCircle, RefreshCw, X } from 'lucide-react'
 import './publication.css'
 import { getProfile, returnToLogin } from './chat'
-import type { Friend, Profile } from './chat'
+import type { Friend, PostSummary, Profile } from './chat'
 import { discover, getFeed, PeopleHeader, PersonProfile } from './FriendsPage'
 import type { FeedPage } from './FriendsPage'
 import { FriendIdentity, PostPhoto } from './SocialMedia'
 import { isPlainClick } from './ProfileBody'
+import PreviousPost from './PreviousPost'
 
 type PhotoState = 'idle' | 'queued' | 'generating' | 'ready' | 'failed'
 type Candidate = {
@@ -27,6 +28,8 @@ type Candidate = {
   operator_note: string
   last_error: string
   issues: string[]
+  previous_post: PostSummary | null
+  previous_candidates: PostSummary[]
 }
 type Week = {
   id: number
@@ -75,6 +78,7 @@ const stamp = new Intl.DateTimeFormat('ko-KR', {
   hourCycle: 'h23',
 })
 const reason = (err: unknown) => (err instanceof Error ? err.message : '연결을 확인해 주세요.')
+const previousKey = (post: PostSummary | null) => post ? `${post.id}:${post.version}` : ''
 
 class RequestError extends Error {
   constructor(readonly status: number, message: string) {
@@ -287,6 +291,7 @@ function Feed() {
         <div className="feed-post-foot">
           <p>{post.caption}</p>
           <a className="feed-quote" href={`/chat/from-post/${post.id}/`}><MessageCircle size={15}/>{post.name}에게 말 걸기<ArrowUpRight size={15}/></a>
+          {post.previous_post && <PreviousPost key={post.version} id={post.id} version={post.version}/>}
         </div>
       </article>
     })}</div>
@@ -294,6 +299,18 @@ function Feed() {
     {page?.next_cursor && <button className="profile-more" disabled={busy} onClick={() => void load(page.next_cursor!)}>이전 소식 더 보기<ChevronDown size={16}/></button>}
     {route && <FeedProfileDialog key={route.postId} route={route} load={loadProfile} openPost={openPost}/>}
   </>
+}
+
+function StudioPrevious({ post }: { post: PostSummary }) {
+  return <div className="pub-previous-preview">
+    <a className="pub-preview" href={post.photo.url} target="_blank" rel="noreferrer">
+      <img src={post.photo.url} alt={post.photo.alt || '이전 소식 사진 미리보기'} loading="lazy"/>
+    </a>
+    <div>
+      <time dateTime={post.published_at}>{stamp.format(new Date(post.published_at))} KST</time>
+      <p>{post.caption}</p>
+    </div>
+  </div>
 }
 
 function CandidateEditor({
@@ -318,11 +335,20 @@ function CandidateEditor({
   const post = editor.post
   const [photo, setPhoto] = useState(post.photo_id || '')
   const [alt, setAlt] = useState(post.photo_alt)
+  const initialPrevious = previousKey(post.previous_post)
+  const [previous, setPrevious] = useState(initialPrevious)
+  const candidates = current.previous_candidates ?? []
+  const linked = current.previous_post
+  const choices = linked && !candidates.some(candidate => previousKey(candidate) === previousKey(linked))
+    ? [linked, ...candidates] : candidates
+  const selectedPrevious = choices.find(candidate => previousKey(candidate) === previous)
+  const missingPrevious = previous !== '' && !selectedPrevious
   const stale =
     editor.revision !== week.revision ||
     post.version !== current.version ||
     post.state !== current.state
   async function submit(form: HTMLFormElement) {
+    if (busy || stale || missingPrevious) return
     const fields = new FormData(form)
     function changedTime(name: 'event_at' | 'publish_at') {
       const value = fields.get(name)
@@ -344,6 +370,9 @@ function CandidateEditor({
       photo_alt: alt,
       ...changedTime('event_at'),
       ...changedTime('publish_at'),
+      ...(previous !== initialPrevious && {
+        previous_post: selectedPrevious ? { id: selectedPrevious.id, version: selectedPrevious.version } : null,
+      }),
     })
     if (saved) close()
   }
@@ -355,44 +384,56 @@ function CandidateEditor({
         void submit(e.currentTarget)
       }}
     >
-      <label>
-        피드 본문
-        <textarea name="caption" required maxLength={4000} defaultValue={post.caption} />
-      </label>
+      <div className="pub-comparison">
+        <fieldset>
+          <legend>이번 소식</legend>
+          <label>
+            피드 본문
+            <textarea name="caption" required maxLength={4000} defaultValue={post.caption} />
+          </label>
+          <label>
+            캐릭터의 사진
+            <select
+              value={photo}
+              onChange={(e) => {
+                const next = week.photos.find((p) => p.key === e.target.value)
+                setPhoto(next?.key || '')
+                setAlt(next?.alt || '')
+              }}
+            >
+              <option value="">사진 없음</option>
+              {week.photos.filter((p) => p.character_id === post.character_id).map((p) => (
+                <option key={p.key} value={p.key}>{p.alt}</option>
+              ))}
+            </select>
+          </label>
+          {photo && <img className="pub-thumb" src={'/api/ops/photos/' + encodeURIComponent(photo) + '/'} alt={alt}/>}
+          <label>
+            사진 대체 텍스트
+            <input value={alt} maxLength={200} onChange={(e) => setAlt(e.target.value)} />
+          </label>
+        </fieldset>
+        <fieldset>
+          <legend>이전 소식</legend>
+          <label>
+            연결할 이전 소식
+            <select value={previous} onChange={e => setPrevious(e.target.value)}>
+              <option value="">연결 안 함</option>
+              {missingPrevious && <option value={previous} disabled>볼 수 없는 소식</option>}
+              {choices.map(candidate => (
+                <option key={previousKey(candidate)} value={previousKey(candidate)}>
+                  {stamp.format(new Date(candidate.published_at))} · {candidate.caption.replace(/\s+/g, ' ').slice(0, 70)}
+                </option>
+              ))}
+            </select>
+          </label>
+          {selectedPrevious && <StudioPrevious post={selectedPrevious}/>}
+          {missingPrevious && <p className="pub-issue" role="status">선택한 이전 소식을 볼 수 없어요. 다시 선택해 주세요.</p>}
+        </fieldset>
+      </div>
       <label>
         장면 · 공개 사실 (한 줄에 한 문장, 최대 5개)
         <textarea name="public_facts" required defaultValue={post.public_facts.join('\n')} />
-      </label>
-      <label>
-        캐릭터의 사진
-        <select
-          value={photo}
-          onChange={(e) => {
-            const next = week.photos.find((p) => p.key === e.target.value)
-            setPhoto(next?.key || '')
-            setAlt(next?.alt || '')
-          }}
-        >
-          <option value="">사진 없음</option>
-          {week.photos
-            .filter((p) => p.character_id === post.character_id)
-            .map((p) => (
-              <option key={p.key} value={p.key}>
-                {p.alt}
-              </option>
-            ))}
-        </select>
-      </label>
-      {photo && (
-        <img
-          className="pub-thumb"
-          src={'/api/ops/photos/' + encodeURIComponent(photo) + '/'}
-          alt={alt}
-        />
-      )}
-      <label>
-        사진 대체 텍스트
-        <input value={alt} maxLength={200} onChange={(e) => setAlt(e.target.value)} />
       </label>
       <label>
         사건 시각 · 한국 시간
@@ -430,7 +471,7 @@ function CandidateEditor({
         </div>
       )}
       <div className="pub-actions">
-        <button className="accent" disabled={busy || stale}>
+        <button className="accent" disabled={busy || stale || missingPrevious}>
           초안으로 저장
         </button>
         <button type="button" disabled={busy} onClick={close}>
@@ -460,7 +501,7 @@ function CandidateCard({
   const edit = () => onEdit({ post, revision: week.revision })
   const job = post.photo_job
   return (
-    <article className="pub-card pub-candidate">
+    <article className={'pub-card pub-candidate' + (editor ? ' pub-candidate-editing' : '')}>
       {!editor &&
         (post.photo_id ? (
           <a
@@ -504,6 +545,10 @@ function CandidateCard({
         ) : (
           <>
             <p className="pub-copy">{post.caption}</p>
+            {post.previous_post && <div className="pub-previous">
+              <h3>이전 소식</h3>
+              <StudioPrevious post={post.previous_post}/>
+            </div>}
             <dl className="pub-details">
               <dt>사건 시각</dt>
               <dd>

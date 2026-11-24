@@ -22,6 +22,7 @@ from .weekly import (
     content_keys,
     contexts_for,
     due_week_start,
+    previous_candidates,
     recent_publications,
     routines_for,
     timing_issues,
@@ -63,6 +64,8 @@ def snapshot(post):
             'publish_at': post.publish_at.isoformat(),
             'operator_note': post.operator_note,
             'character_id': post.character_id,
+            'previous_post_id': post.previous_post_id,
+            'previous_version': post.previous_version,
             'calendar': [
                 {
                     'id': e.pk,
@@ -75,6 +78,20 @@ def snapshot(post):
             ],
         },
     )
+
+
+def clear_stale_previous(post, now):
+    """Recheck a pinned link under the predecessor row lock before persisting the post."""
+    if post.previous_post_id is None and post.previous_version is None:
+        return False
+    if post.previous_post_id and post.previous_version and (
+        previous_candidates(post, now).select_for_update(of=('self',))
+        .filter(pk=post.previous_post_id, version=post.previous_version).first() is not None
+    ):
+        return False
+    post.previous_post = None
+    post.previous_version = None
+    return True
 
 
 def revise(post, state):
@@ -152,10 +169,12 @@ def edit(week_id, post_id, revision, changes, *, version=None):
         if changes['photo_id'] != post.photo_id and 'photo_alt' not in changes:
             post.photo_alt = photo.alt if photo else ''
     for field, value in changes.items():
-        setattr(post, field, value)
+        if field != 'previous_post':
+            setattr(post, field, value)
+    now = world_now()
     if changes.keys() & {'event_at', 'publish_at'}:
         problems = timing_issues(
-            week.start, post.event_at, post.publish_at, world_now(),
+            week.start, post.event_at, post.publish_at, now,
             routines_for(post.character, week.start), [calendar_entry(e) for e in post.events.all()],
         )
         if problems:
@@ -163,6 +182,12 @@ def edit(week_id, post_id, revision, changes, *, version=None):
                 422, 'invalid_timing', '사건·예약 시각과 주간 일정을 확인해 주세요.',
                 posts=[{'post_id': post.pk, 'issues': problems}],
             )
+    if 'previous_post' in changes:
+        previous = changes['previous_post']
+        post.previous_post_id = previous['id'] if previous else None
+        post.previous_version = previous['version'] if previous else None
+        if previous and clear_stale_previous(post, now):
+            raise ReviewError(422, 'invalid_previous_post', '같은 친구의 최근 공개 글을 다시 골라 주세요.')
     revise(post, changes.get('state', State.DRAFT))
     advance(week)
     return {'revision': week.revision, 'post_id': post.pk, 'version': post.version, 'state': post.state}
@@ -187,7 +212,9 @@ def approve(week_id, revision, user):
             problems.append({'post_id': post.pk, 'issues': found})
     if problems:
         raise ReviewError(422, 'review_required', '표시된 후보를 수정하거나 제외해 주세요.', posts=problems)
-    for post in drafts:
+    for post in sorted(drafts, key=lambda p: p.previous_post_id or 0):
+        if clear_stale_previous(post, now):
+            revise(post, State.DRAFT)
         post.state = State.SCHEDULED
         post.approved_version = post.version
         post.approved_by = user
@@ -316,8 +343,14 @@ def store_week(week, calendar, contexts, rows):
     current_routines = {p.pk: routines_for(p, week.start) for p in people}
     if any(current_routines.get(c['character']['id']) != c['routines'] for c in contexts):
         raise weekly.WeeklyError('캐릭터 일과가 바뀌었어요. 새 시간표로 다시 생성해 주세요.')
-    for row in rows:
-        post = live.posts.create(**{key: value for key, value in row.items() if key != 'calendar_ids'})
+    posts = [
+        FeedPost(week=live, **{key: value for key, value in row.items() if key != 'calendar_ids'})
+        for row in rows
+    ]
+    for post in sorted(posts, key=lambda p: p.previous_post_id or 0):
+        clear_stale_previous(post, now)
+    for post, row in zip(posts, rows):
+        post.save(force_insert=True)
         post.events.add(*row['calendar_ids'])
         snapshot(post)
         if post.photo_id is None:
@@ -394,7 +427,11 @@ def dispatch_publications(now=None, limit=100):
             post.last_error = (
                 '' if available else '사진을 읽을 수 없어요. 자산을 복구한 뒤 다시 시도해 주세요.'
             )
-            post.save(update_fields=['state', 'published_at', 'last_error'])
+            fields = ['state', 'published_at', 'last_error']
+            if available and clear_stale_previous(post, post.published_at):
+                # Keep the approved snapshot as the record of the operator's selection.
+                fields.extend(['previous_post', 'previous_version'])
+            post.save(update_fields=fields)
 
 
 def published_posts(character_id, now):

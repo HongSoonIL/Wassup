@@ -16,6 +16,7 @@ from llm import chat_photos
 from memory.services import history_floor, memory_revision, memory_snapshot
 from world.clock import routine_at
 from world.models import Persona, State
+from world.post_links import current_previous
 from world.publication import published_posts
 
 
@@ -59,6 +60,10 @@ PHOTO_INSTRUCTIONS = """사진을 보낼 때만 attachment에 photo_candidates�
 photo_repeat_requested가 true이고 photo_candidates에 사진이 한 장 있으면 이 방에서 사용자가 다시 보여 달라고 한 바로 그 사진이다. 그 사진을 보내며 짧게 답한다. 사진이 비어 있으면 다른 사진으로 대체하지 않는다.
 특정 사진에 대한 질문에는 quoted_post_id, 없으면 photo_reference_id가 가리키는 shared_events를 먼저 본다. 전에 보낸 사진은 재전송 요청이 있을 때만 다시 보낸다. 그 장면에서 보이는 내용과 연결된 공개 사실만 이용하고, 이유나 사람, 장소, 시각을 지어내지 않는다. photo_candidates에만 있는 사진은 실제로 보내기로 한 경우에만 설명한다.
 조건에 맞는 사진이 없으면 attachment는 null이다. 사진을 보냈다고 말하거나 보낼 것처럼 ‘이거 봐’라고 하지 않는다. 사진이 없다는 건 사진을 갖고 있지 않다는 뜻이 아니므로 지금 보여 줄 만한 게 없다고 네 말투로 짧게 답한다. URL이나 이미지 마크다운을 쓰지 않는다."""
+
+POST_CONTINUITY_INSTRUCTIONS = """글 사이의 연결은 post_continuity가 알려 줄 때만 사용한다. post_id는 shared_events의 현재 글이고 previous는 이어지는 바로 이전 공개본이다.
+마지막 질문이 그 이야기의 후속 질문이면 두 공개본의 facts, caption, photo_alt에서 확인된 내용만 자기 경험처럼 이어서 말한다. 이전 글을 따라 더 옛날로 거슬러 올라가거나 다른 글을 같은 사건에 합치지 않는다. 질문이 바뀌면 새 화제에 답한다.
+각 글의 event_at은 일이 있었던 시각이고 published_at은 게시 시각이다. 자료에 없는 사람, 이유, 장소, 시각, 결과를 지어내지 않는다. 이전 글이 사진 선택 목록에 저절로 들어가는 것은 아니다."""
 
 
 def memory_interest(question, today):
@@ -159,6 +164,47 @@ def public_event(post):
     }
 
 
+def connected_reference(history, public, trigger, source, is_quote, now):
+    """Resolve a continuation only after identifying the actual topic of this turn."""
+    if trigger.source_post_id:
+        return source, is_quote
+
+    question = trigger.text
+    if private_recall_only(question) or chat_photos.sharing_requested(question):
+        return None, False
+    if source and not is_quote and source.previous_post_id:
+        if (chat_photos.POINTED_PHOTO.search(question) or chat_photos.PHOTO_CAPTURE.search(question)
+                or chat_photos.quote_continues_topic(question, chat_photos.post_subject(source), ())):
+            return source, False
+        return None, False
+    quote = chat_photos.recent_post_quote(history, trigger.created_at)
+    if quote:
+        post = source if source and source.pk == quote.source_post_id else public.filter(
+            pk=quote.source_post_id, version=quote.source_version,
+        ).first()
+        if post is None:
+            public = public.exclude(pk=quote.source_post_id)
+        if post and post.previous_post_id:
+            subject = chat_photos.post_subject(post)
+            previous = current_previous(post, now)
+            if previous:
+                subject |= chat_photos.post_subject(previous)
+            intervening = list(history.filter(sender='user', pk__gt=quote.pk, pk__lt=trigger.pk)
+                               .order_by('-pk').values_list('text', flat=True)[:17])
+            if chat_photos.quote_continues_topic(question, subject, intervening):
+                return post, True
+
+    if chat_photos.PUBLIC_POST_REFERENCE.search(question):
+        # An explicit feed reference may name an unquoted post. Require a unique
+        # subject among the visible recent posts before opening the earlier edition.
+        words = chat_photos.post_topic_words(question)
+        matches = [post for post in public.order_by('-published_at', '-pk')[:4]
+                   if words & chat_photos.post_subject(post)]
+        if len(matches) == 1:
+            return matches[0], False
+    return None, False
+
+
 @transaction.atomic
 def context_for(plan, now, *, include_memories=True):
     # Edits, extraction, dispatch and acceptance all serialize on this room. Both
@@ -172,20 +218,21 @@ def context_for(plan, now, *, include_memories=True):
     day_start = timezone.localtime(plan.trigger_message.created_at).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
-    history = room.messages.filter(pk__gt=floor, pk__lte=plan.trigger_message_id)
-    recent = history.filter(created_at__gte=day_start).select_related('reply_bubble')
+    asked_at = plan.trigger_message.created_at
+    history = room.messages.filter(pk__gt=floor, pk__lte=plan.trigger_message_id, created_at__lte=asked_at)
+    recent = history.filter(created_at__gte=day_start).select_related('reply_bubble__plan')
     turns = list(recent.order_by('-pk')[:16])
-    public = published_posts(person.pk, now)
-    turns = chat_photos.visible_turns(turns, history, public)
+    public = published_posts(person.pk, now).select_related('previous_post__photo')
+    turns = chat_photos.visible_turns(turns, history, public, now)
     if turns and not turns[0].source_post_id and private_recall_only(turns[0].text):
         # A friend's post cannot establish what the user saw or did.
         public = public.none()
     candidate_posts = public
     question = turns[0].text if turns else ''
-    asked_at = plan.trigger_message.created_at
     asked_on = timezone.localdate(asked_at)
     reference = chat_photos.related_reference(turns, history, public, question, asked_at) if turns else None
     source = None
+    is_quote = False
     if reference and reference[0] is not None:
         post_id, version, is_quote = reference
         # An edited edition of a reference may not replace what the user saw.
@@ -194,13 +241,29 @@ def context_for(plan, now, *, include_memories=True):
         source = source_posts.filter(pk=post_id).first()
         if not source:
             public = public.exclude(pk=post_id)
-    posts = list(public.order_by('-published_at', '-pk')[:4])
-    if source and all(p.pk != source.pk for p in posts):
-        posts.append(source)
     candidates = chat_photos.photo_candidates(
         candidate_posts, history, source, question, asked_on, now,
         blocked_post_id=reference[0] if reference and source is None else None,
     ) if turns else []
+    focused, focused_quote = (connected_reference(history, public, turns[0], source, is_quote, now)
+                              if turns else (None, False))
+    previous = current_previous(focused, now) if focused and focused.previous_post_id else None
+    if focused and focused.previous_post_id:
+        # The earlier edition enters through the link, where its validity can be
+        # distinguished from a separate recent publication of the same post.
+        public = public.exclude(pk=focused.previous_post_id)
+        if previous is None:
+            candidates = [candidate for candidate in candidates if candidate.pk != focused.previous_post_id]
+    if focused and focused_quote:
+        source, is_quote = focused, True
+    elif source and source.previous_post_id and not focused and not chat_photos.sharing_requested(question):
+        # Keep attachment selection unchanged while dropping an inferred
+        # reference when the latest question changed topic.
+        source = None
+    posts = list(public.order_by('-published_at', '-pk')[:4])
+    for post in (source, focused if previous else None):
+        if post and all(p.pk != post.pk for p in posts):
+            posts.append(post)
     local = timezone.localtime(max(now, plan.reply_at))
     slot = routine_at(person, local)
     received_slot = routine_at(person, plan.trigger_message.created_at)
@@ -231,6 +294,7 @@ def context_for(plan, now, *, include_memories=True):
         'photo_reference_id': source.pk if source and not is_quote else None,
         'photo_repeat_requested': chat_photos.repeat_requested(question),
         'shared_events': [public_event(p) for p in posts],
+        **({'post_continuity': {'post_id': focused.pk, 'previous': public_event(previous)}} if previous else {}),
         'photo_candidates': [public_event(p) for p in candidates],
         'recent_turns': [
             {'sender': m.sender, 'text': m.text, 'at': timezone.localtime(m.created_at).isoformat()} for m in reversed(turns)
@@ -249,6 +313,29 @@ def sample_reply(context):
     if chat_photos.sharing_requested(question):
         return ['지금 보여 줄 만한 건 없네'] if seoyun else ['지금 보여줄 건 없네']
     posts = context['shared_events']
+    continuity = context.get('post_continuity')
+    if continuity:
+        current = next((p for p in posts if p['id'] == continuity['post_id']), None)
+        if current:
+            previous = continuity['previous']
+            event = previous if any(word in question for word in ('지난', '이전', '처음', '저번', '전에는')) else current
+            if any(word in question for word in ('언제', '며칠', '몇 시')):
+                published = any(word in question for word in ('올렸', '게시했', '올린'))
+                when = event['published_at'] if published else event['event_at']
+                if not when:
+                    return ['언제였는지는 잘 기억 안 나']
+                day = date.fromisoformat(when[:10])
+                if '몇 시' in question:
+                    hour, minute = int(when[11:13]), int(when[14:16])
+                    clock = f'{hour}시 {minute}분' if minute else f'{hour}시'
+                    return [f'{clock}에 올렸어' if published else f'{clock}였어']
+                day_text = f'{day.month}월 {day.day}일'
+                return [f'{day_text}에 올렸어' if published else f'{day_text}이었어']
+            if any(word in question for word in ('왜', '이유', '누구', '어디')):
+                return ['그건 잘 기억이 안 나']
+            for detail in (*event['facts'], event['caption']):
+                if detail.strip() and len(detail) <= 1000:
+                    return [detail]
     post = next((p for p in posts if p['id'] == context['quoted_post_id']), None)
     if not post and any(word in question for word in ('포스터', '주황', '군청')):
         post = next((p for p in posts if '포스터' in ' '.join(p['facts'])), None)
@@ -351,6 +438,7 @@ def openai_reply(context):
     instructions = INSTRUCTIONS
     if 'photo_candidates' in context:
         instructions += '\n' + PHOTO_INSTRUCTIONS
+    instructions += '\n' + POST_CONTINUITY_INSTRUCTIONS
     if context.get('woke_before_reply'):
         instructions += ('\n너는 지금 잠에서 깬 뒤 지난 톡을 읽었다. 상대가 자러 간다고 했으면 지금 잘 잤는지 묻거나 '
                          '그때 이미 자고 있었다고 짧게 말한다. 이 답장에서 “잘 자”, “푹 자”는 시각에 맞지 않는다.')

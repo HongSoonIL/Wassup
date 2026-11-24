@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useId, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { ImageOff, X } from 'lucide-react'
 import FriendPortrait from './FriendPortrait'
@@ -9,6 +9,19 @@ type Photo = { src: string; alt: string }
 type PhotoTarget = Photo | { key: string }
 type OpenPhoto = (photo: PhotoTarget, trigger: HTMLButtonElement) => void
 const PhotoContext = createContext<OpenPhoto | null>(null)
+const TransientPhotoContext = createContext<((key: string, photo: Photo) => () => void) | null>(null)
+
+export function useTransientPhoto(scope: string, photo?: Photo) {
+  const id = useId()
+  const register = useContext(TransientPhotoContext)
+  const key = `transient:${id}:${scope}`
+  const src = photo?.src
+  const alt = photo?.alt
+  useLayoutEffect(() => {
+    if (src !== undefined && alt !== undefined) return register?.(key, { src, alt })
+  }, [register, key, src, alt])
+  return key
+}
 
 export function FriendIdentity({ person, detail, className = '' }: {
   person?: Person; detail?: ReactNode; className?: string
@@ -32,11 +45,21 @@ export function PhotoViewerProvider({ children, resolvePhoto, loading = false }:
   children: ReactNode; resolvePhoto?: (key: string) => Photo | undefined; loading?: boolean
 }) {
   const [target, setTarget] = useState(historyPhoto)
-  const photo = target && ('key' in target ? resolvePhoto?.(target.key) : target)
+  const [transientPhotos, setTransientPhotos] = useState(new Map<string, Photo>())
+  const photo = target && ('key' in target ? transientPhotos.get(target.key) ?? resolvePhoto?.(target.key) : target)
   const [failedSrc, setFailedSrc] = useState<string | null>(null)
   const viewer = useRef<HTMLDialogElement>(null)
   const trigger = useRef<HTMLButtonElement | null>(null)
   const description = useId()
+  // Keep revocable previews out of history state. Only a mounted, verified preview supplies the photo.
+  const registerPhoto = useCallback((key: string, photo: Photo) => {
+    setTransientPhotos(photos => new Map(photos).set(key, photo))
+    return () => setTransientPhotos(photos => {
+      const next = new Map(photos)
+      next.delete(key)
+      return next
+    })
+  }, [])
   const openPhoto = useCallback<OpenPhoto>((next, button) => {
     trigger.current = button
     setFailedSrc(null)
@@ -69,7 +92,7 @@ export function PhotoViewerProvider({ children, resolvePhoto, loading = false }:
   }
 
   return <PhotoContext.Provider value={openPhoto}>
-    {children}
+    <TransientPhotoContext.Provider value={registerPhoto}>{children}</TransientPhotoContext.Provider>
     <dialog className="ws-viewer" ref={viewer} aria-label="사진 원본" aria-describedby={description}
       onCancel={event => { event.preventDefault(); close() }}
       onClick={event => { if (event.target === viewer.current) close() }}>
@@ -97,7 +120,7 @@ export function PostPhoto({ src, alt, className = '', label, viewerKey }: Photo 
     aria-label={failed ? '사진 다시 불러오기' : label || (alt ? alt + ' · 사진 확대' : '사진 확대')}
     onClick={event => {
       if (failed) setFailedSrc(null)
-      // Chat photos are resolved from current messages when revisiting a browser history entry.
+      // Keyed photos are resolved from live UI data when revisiting a history entry.
       else open?.(viewerKey ? { key: viewerKey } : { src, alt }, event.currentTarget)
     }}>
     {failed ? <span className="ws-photo-retry" title="사진 다시 불러오기"><ImageOff size={20} aria-hidden="true"/></span>

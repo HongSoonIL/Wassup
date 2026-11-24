@@ -135,6 +135,8 @@ class WeeklyGenerationTests(TransactionTestCase):
             )
             fields = form['schema']['properties']['candidates']['items']['properties']
             self.assertEqual(fields['asset_key']['enum'], [a['key'] for a in context['assets']] + [None])
+            self.assertEqual(fields['previous_post_id']['enum'], [None])
+            self.assertTrue(all(p['id'] and p['version'] == 1 for p in context['recent_posts']))
             requests.append(context)
             text = json.dumps(sample_week(context), ensure_ascii=False)
             return BytesIO(
@@ -181,6 +183,54 @@ class WeeklyGenerationTests(TransactionTestCase):
         previous.published_at -= timedelta(microseconds=1)
         previous.save(update_fields=['published_at'])
         self.assertEqual(assets()['서윤'], ['studio-print'])
+
+    def poster_history(self):
+        previous = self.history(self.artist, NOW - timedelta(days=5), '주황으로 골랐어')
+        previous.public_facts = ['군청색과 주황색으로 포스터를 한 장씩 인쇄했다.', '최종 색으로 주황을 골랐다.']
+        previous.photo_id = 'studio-print'
+        previous.version = 3
+        previous.save(update_fields=['public_facts', 'photo', 'version'])
+        return previous
+
+    def test_fake_continuation_pins_the_version_seen_in_recent_history(self):
+        previous = self.poster_history()
+        generate_week(self.week.pk)
+        post = self.week.posts.get(previous_post=previous)
+        self.assertEqual(post.previous_version, 3)
+        self.assertEqual(post.versions.get().snapshot['previous_post_id'], previous.pk)
+        self.assertEqual(post.versions.get().snapshot['previous_version'], 3)
+        self.assertIn('최종본', post.public_facts[0])
+        self.assertFalse(self.week.posts.filter(character=self.first, previous_post__isnull=False).exists())
+
+    def test_changed_predecessor_during_generation_keeps_the_independent_draft(self):
+        previous = self.poster_history()
+
+        def respond(context):
+            output = sample_week(context)
+            if context['character']['id'] == self.artist.pk:
+                self.assertEqual(output['candidates'][0]['previous_post_id'], previous.pk)
+                FeedPost.objects.filter(pk=previous.pk).update(version=4)
+            return output
+
+        with patch('llm.weekly.propose', side_effect=respond):
+            generate_week(self.week.pk)
+        self.week.refresh_from_db()
+        self.assertEqual(self.week.generation, 'ready')
+        post = self.week.posts.get(caption='주황으로 뽑아서 드디어 벽에 붙였다')
+        self.assertEqual((post.previous_post_id, post.previous_version), (None, None))
+
+    def test_legacy_and_unknown_predecessor_choices_leave_the_post_independent(self):
+        previous = self.poster_history()
+        context = next(c for c in contexts_for(MONDAY, calendar_for(MONDAY), NOW)
+                       if c['character']['id'] == self.artist.pk)
+        output = sample_week(context)
+        row = output['candidates'][0]
+        self.assertEqual(row.pop('previous_post_id'), previous.pk)
+        self.assertIsNone(candidates_for(context, output, NOW)[0]['previous_post_id'])
+        for invalid in (previous.pk + 100, True, [previous.pk]):
+            with self.subTest(invalid=invalid):
+                row['previous_post_id'] = invalid
+                self.assertIsNone(candidates_for(context, output, NOW)[0]['previous_post_id'])
 
     def test_generated_job_results_stay_out_of_the_auto_pair_library(self):
         draft = self.week.posts.create(character=self.artist, caption='비공개 초안', publish_at=NOW)
@@ -670,6 +720,11 @@ class ProviderErrorsTests(SimpleTestCase):
         self.assertEqual(calendar_field([])['maxItems'], 0)
         self.assertEqual(calendar_field([{'id': 34}])['items']['enum'], [34])
         self.assertNotIn('enum', calendar_field([])['items'])
+
+    def test_predecessor_choices_are_nullable_and_constrained_per_request(self):
+        item = weekly_schema([], [], previous_ids=[13, 34])['properties']['candidates']['items']
+        self.assertIn('previous_post_id', item['required'])
+        self.assertEqual(item['properties']['previous_post_id']['enum'], [13, 34, None])
 
     def test_refusal_incomplete_and_malformed_response_are_actionable(self):
         for response in (

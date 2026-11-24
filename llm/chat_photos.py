@@ -6,6 +6,8 @@ from datetime import date, timedelta
 from django.db.models import F, Q
 from django.utils import timezone
 
+from world.post_links import current_previous
+
 
 PHOTO_WORD = re.compile(r'사진|이미지|짤|photo|picture|pic\b', re.IGNORECASE)
 PHOTO_CAPTURE = re.compile(r'찍(?:은|었|힌)')
@@ -43,6 +45,65 @@ PRIOR_SHARE = re.compile(
 )
 RECENT_PHOTO_WINDOW = timedelta(days=2)
 PHOTO_LIMIT = 4
+RECENT_QUOTE_WINDOW = timedelta(days=7)
+POST_LINK_KEY = 'post_link'
+POST_TOPIC_PARTICLE = re.compile(r'(?:으로|에서|에게|까지|부터|이랑|하고|처럼|[은는이가을를의와과에로도])$')
+POST_TOPIC_FILLER = set(
+    '그 이 저 거 글 사진 게시물 피드 이번 저번 지난 오늘 어제 아까 지금 요즘 결국 나중 처음 '
+    '진짜 너무 다시 근데 그때 거기 이제 최종 무슨 어떤 언제 어디 어떻게 뭐 뭐야 '
+    '있어 있었어 좋아 했어 하는 같아 봤어 골랐어 결과'.split()
+)
+POST_TOPIC_FOLLOWUP = re.compile(
+    r'(?:(?:근데|그럼|그래서|응|아|아니)[, ]+)*'
+    r'(?:(?:그때|그거|그건|그게|그 일|그 사진|그 (?:뒤|다음|후)(?:에)?|'
+    r'저번에|지난번에|결국|나중에|처음에|이어서)\s+)*'
+    r'(?:(?:어떻게|뭐(?:가|로)?|잘|왜|언제|몇 시에|무슨 색(?:으로)?)\s*)?'
+    r'(?:됐|됬|했|골랐|찍었|끝났|나왔|올렸|바꿨)(?:어|지|니|더라|던 거야|었지)?[?？.! ]*'
+)
+PUBLIC_POST_REFERENCE = re.compile(
+    r'피드|게시물|올린\s*(?:글|사진)|올렸던\s*(?:글|사진)|\b(?:post|feed)\b', re.IGNORECASE,
+)
+
+
+def post_topic_words(text):
+    words = (POST_TOPIC_PARTICLE.sub('', word.lower()) for word in PHOTO_NOUN.findall(text))
+    return {word for word in words if len(word) >= 2 and word not in POST_TOPIC_FILLER}
+
+
+def post_subject(post):
+    return post_topic_words(' '.join((post.caption, post.photo_alt, *post.public_facts)))
+
+
+def quote_continues_topic(question, subject, intervening):
+    words = post_topic_words(question)
+    if words & subject:
+        return True
+    if not POST_TOPIC_FOLLOWUP.fullmatch(question):
+        return False
+    # A bare “그거 어떻게 됐어?” points to the last conversation topic.
+    return len(intervening) <= 16 and all(
+        post_topic_words(text) & subject or POST_TOPIC_FOLLOWUP.fullmatch(text) for text in intervening
+    )
+
+
+def recent_post_quote(history, asked_at):
+    return (history.filter(sender='user', source_post_id__isnull=False,
+                           created_at__range=(asked_at - RECENT_QUOTE_WINDOW, asked_at))
+            .order_by('-pk').first())
+
+
+def post_link_is_current(versions, posts, now):
+    """Check both pinned editions and their relationship in one loaded snapshot."""
+    current_id, earlier_id = versions[POST_LINK_KEY]
+    current, earlier = posts.get(str(current_id)), posts.get(str(earlier_id))
+    if not current or not earlier or (
+        current.version != versions.get(str(current_id))
+        or earlier.version != versions.get(str(earlier_id))
+        or current.previous_post_id != earlier.pk
+    ):
+        return False
+    current.previous_post = earlier
+    return current_previous(current, now) is not None
 
 
 def photo_subject(text, *, visible=False):
@@ -182,16 +243,23 @@ def sample_photo(context):
     return next((p for p in candidates if any(w in p['photo_alt'] for w in words)), None)
 
 
-def visible_turns(turns, history, public):
-    """Drop withdrawn photos and captions from the same generated reply."""
-    plan_ids = {t.reply_bubble.plan_id for t in turns if hasattr(t, 'reply_bubble')}
+def visible_turns(turns, history, public, now):
+    """Drop generated replies whose photo or connected source has been withdrawn."""
+    plans = {t.reply_bubble.plan_id: t.reply_bubble.plan for t in turns if hasattr(t, 'reply_bubble')}
     sent = list(history.filter(attachment_version__isnull=False).filter(
-        Q(pk__in=[t.pk for t in turns]) | Q(reply_bubble__plan_id__in=plan_ids),
+        Q(pk__in=[t.pk for t in turns]) | Q(reply_bubble__plan_id__in=plans),
     ).values_list('pk', 'reply_bubble__plan_id', 'attachment_post_id', 'attachment_version'))
     versions = dict(photo_posts(public).filter(pk__in=[row[2] for row in sent]).values_list('pk', 'version'))
     withdrawn = [(pk, plan_id) for pk, plan_id, post_id, version in sent if versions.get(post_id) != version]
     hidden_ids = {pk for pk, _ in withdrawn}
     hidden_plans = {plan_id for _, plan_id in withdrawn if plan_id is not None}
+    linked_plans = {pk: plan.context_versions for pk, plan in plans.items()
+                    if POST_LINK_KEY in plan.context_versions}
+    if linked_plans:
+        post_ids = {pk for versions in linked_plans.values() for pk in versions[POST_LINK_KEY]}
+        posts = {str(post.pk): post for post in public.filter(pk__in=post_ids).select_related('photo')}
+        hidden_plans.update(pk for pk, versions in linked_plans.items()
+                            if not post_link_is_current(versions, posts, now))
     return [turn for turn in turns if turn.pk not in hidden_ids and (
         not hasattr(turn, 'reply_bubble') or turn.reply_bubble.plan_id not in hidden_plans
     )]

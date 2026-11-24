@@ -4,6 +4,7 @@ import { ArrowUpRight, ChevronDown, Images, MessageCircle } from 'lucide-react'
 import { getProfile } from './chat'
 import type { Profile } from './chat'
 import { FriendIdentity, PostPhoto } from './SocialMedia'
+import PreviousPost from './PreviousPost'
 import './profile.css'
 
 type Post = Profile['posts'][number]
@@ -62,6 +63,7 @@ function Album({ profile, onQuote }: Pick<ProfileProps, 'profile' | 'onQuote'>) 
             <a href={`/feed/#post-${post.id}`}>피드에서 보기 <ArrowUpRight size={13}/></a>
           </div>
         </div>
+        {post.previous_post && <PreviousPost key={post.version} id={post.id} version={post.version}/>}
       </article>
     ))}</div>
     {error && <p className="profile-error" role="alert">{error}</p>}

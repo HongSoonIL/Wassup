@@ -15,6 +15,7 @@ from chat.models import Friendship, Message, ReplyBubble, ReplyPlan
 from chat.reply_timing import CONVERSATION_WINDOW, PHONE_OPEN_WINDOW, ReplyTiming, followup_timing, plan_reply
 from chat.serialization import iso, message_json, readable_photo
 from config.llm import model_for
+from llm.chat_photos import POST_LINK_KEY, post_link_is_current
 from llm.dialogue import context_for, fake_reply, openai_reply, sample_reply
 from memory.services import enqueue, history_floor, memory_revision
 from world.clock import world_now
@@ -142,10 +143,25 @@ def lock_current_posts(plan, versions, now):
     if not versions:
         return {}
     # Keep a concurrent edit or withdrawal on the same side of commit as our decision.
-    rows = (published_posts(plan.room.character_id, now).filter(pk__in=versions)
-            .order_by('pk').select_for_update(no_key=True))
+    editions = {key: value for key, value in versions.items() if key != POST_LINK_KEY}
+    rows = (published_posts(plan.room.character_id, now).filter(pk__in=editions).select_related('photo')
+            .order_by('pk').select_for_update(no_key=True, of=('self',)))
     posts = {str(post.pk): post for post in rows}
-    return posts if {key: post.version for key, post in posts.items()} == versions else None
+    if {key: post.version for key, post in posts.items()} != editions:
+        return None
+    if POST_LINK_KEY in versions and not post_link_is_current(versions, posts, now):
+        return None
+    return posts
+
+
+def reply_context_versions(context):
+    versions = {str(post['id']): post['version'] for post in context['shared_events']}
+    continuity = context.get('post_continuity')
+    if continuity:
+        previous = continuity['previous']
+        versions[str(previous['id'])] = previous['version']
+        versions[POST_LINK_KEY] = [continuity['post_id'], previous['id']]
+    return versions
 
 
 def validate_reply_sources(plan, now):
@@ -172,10 +188,11 @@ def validate_reply_sources(plan, now):
 
 def sample_at_deadline(plan, now):
     context = context_for(plan, now, include_memories=False)
-    versions = {str(p['id']): p['version'] for p in context['shared_events']}
+    versions = reply_context_versions(context)
     if plan.result or lock_current_posts(plan, versions, now) is None:
         # A prepared sequence lost its source, or this sample's snapshot raced an edit.
-        context.update(shared_events=[], quoted_post_id=None)
+        context.update(shared_events=[], quoted_post_id=None, photo_reference_id=None)
+        context.pop('post_continuity', None)
         versions = {}
     plan.context_versions = versions
     plan.memory_revision = context['memory_revision']
@@ -212,6 +229,11 @@ def dispatch_followup(plan, now, events):
     if plan.memory_revision != memory_revision(plan.room_id) and history_floor(plan.room_id) >= plan.trigger_message_id:
         cancel_remaining(plan)
         events.append({'type': 'typing.stop'})
+        return
+    current, post = validate_reply_sources(plan, now)
+    if not current:
+        cancel_remaining(plan)
+        events.append({'type': 'typing.stop'})
     elif bubble.status == ReplyBubble.Status.QUEUED and now >= bubble.typing_at:
         # If the worker was asleep during the pause, start a full typing interval now.
         bubble.deliver_at = now + (bubble.deliver_at - bubble.typing_at)
@@ -219,12 +241,7 @@ def dispatch_followup(plan, now, events):
         bubble.save(update_fields=['typing_at', 'deliver_at', 'status'])
         events.append({'type': 'typing.start', 'expires_at': iso(bubble.deliver_at, timespec='milliseconds')})
     elif bubble.status == ReplyBubble.Status.TYPING and now >= bubble.deliver_at:
-        current, post = validate_reply_sources(plan, now)
-        if current:
-            deliver_bubble(plan, bubble, now, events, post)
-        else:
-            cancel_remaining(plan)
-            events.append({'type': 'typing.stop'})
+        deliver_bubble(plan, bubble, now, events, post)
 
 
 def dispatch_first(plan, now, events):
@@ -347,6 +364,6 @@ def prepare_next_reply():
             model_name=model_name,
             generation_token=None,
             generation_until=None,
-            context_versions={str(p['id']): p['version'] for p in context['shared_events']},
+            context_versions=reply_context_versions(context),
         )
     return True

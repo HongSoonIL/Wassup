@@ -15,4 +15,5 @@ urlpatterns = [
     path('api/feed/', views.feed),
     path('api/characters/<int:character_id>/profile/', views.profile),
     path('api/posts/<int:post_id>/photo/', views.photo),
+    path('api/posts/<int:post_id>/previous/', views.previous_post),
 ]

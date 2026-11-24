@@ -3,6 +3,8 @@
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+from .weekly import previous_versions
+
 
 def sample_week(context):
     from world.weekly import content_keys, timing_issues
@@ -22,7 +24,7 @@ def sample_week(context):
         seen.update(content_keys(past['caption'], past['public_facts']))
     rows = []
 
-    def add(day, clock, caption, facts, alt, key=None, event=None):
+    def add(day, clock, caption, facts, alt, key=None, event=None, previous_id=None):
         publish = datetime.combine(day, clock, tz)
         at = publish - timedelta(minutes=10)
         keys = content_keys(caption, facts)
@@ -43,7 +45,23 @@ def sample_week(context):
             'caption': caption,
             'public_facts': facts,
             'editor_note': '',
+            'previous_post_id': previous_id,
         })
+
+    poster_facts = {
+        '군청색과 주황색으로 포스터를 한 장씩 인쇄했다.', '최종 색으로 주황을 골랐다.',
+    }
+    eligible = previous_versions(context)
+    previous = next(
+        (past for past in reversed(context['recent_posts'])
+         if past.get('id') in eligible and poster_facts.issubset(past['public_facts'])),
+        None,
+    )
+    if artist and previous:
+        for offset in (2, 3, 4):
+            add(start + timedelta(days=offset), time(16, 35), '주황으로 뽑아서 드디어 벽에 붙였다',
+                ['지난번 주황으로 정한 포스터의 최종본을 인쇄해 작업실 벽에 붙였다.'],
+                '작업실 벽에 종이테이프로 붙인 커다란 주황색 포스터', previous_id=previous['id'])
 
     for event in calendar:
         if event['kind'] == 'sports' and not artist:
