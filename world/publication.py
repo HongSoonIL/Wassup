@@ -1,14 +1,28 @@
 """Weekly editorial review and durable publication jobs."""
 
-from datetime import datetime, time, timedelta
+import logging
+from datetime import timedelta
+from uuid import uuid4
 
 from PIL import Image
 
-from django.db import transaction
+from django.db import OperationalError, connection, transaction
+from django.db.models import Q
 from django.utils import timezone
 
+from llm import weekly
+
 from .clock import world_now
-from .models import Character, FeedPost, PostPhoto, PostRevision, PublicationWeek, SchoolEvent
+from .models import Character, FeedPost, PostPhoto, PostRevision, PublicationWeek
+from .weekly import (
+    calendar_entry,
+    calendar_for,
+    candidates_for,
+    content_keys,
+    contexts_for,
+    routines_for,
+    timing_issues,
+)
 
 State = FeedPost.State
 
@@ -42,6 +56,7 @@ def snapshot(post):
             'public_facts': post.public_facts,
             'photo_id': post.photo_id,
             'photo_alt': post.photo_alt,
+            'event_at': post.event_at.isoformat() if post.event_at else None,
             'publish_at': post.publish_at.isoformat(),
             'operator_note': post.operator_note,
             'character_id': post.character_id,
@@ -88,30 +103,30 @@ def issues(post, now):
         result.append('invalid_photo')
     if not post.caption.strip() or not post.public_facts:
         result.append('missing_content')
-    if post.publish_at <= now:
-        result.append('past_time')
-    local = timezone.localtime(post.publish_at)
-    day = local.date()
-    if not post.week.start <= day < post.week.start + timedelta(days=7):
-        result.append('outside_week')
-    for event in post.events.all():
-        first = event.start_date - timedelta(days=1 if event.kind == SchoolEvent.Kind.SPORTS else 0)
-        if not first <= day < event.end_date_exclusive:
-            result.append('calendar_conflict')
-            break
-    for routine in post.character.routines.filter(weekday=day.weekday(), state='sleep'):
-        if routine.start_time <= local.time() and (
-            routine.end_time == time.min or local.time() < routine.end_time
-        ):
-            result.append('schedule_conflict')
-            break
-    if (
-        FeedPost.objects.filter(week=post.week, character=post.character, caption=post.caption)
+    result.extend(
+        timing_issues(
+            post.week.start,
+            post.event_at,
+            post.publish_at,
+            now,
+            routines_for(post.character, post.week.start),
+            [calendar_entry(e) for e in post.events.all()],
+        )
+    )
+    keys = content_keys(post.caption, post.public_facts)
+    others = (
+        post.week.posts.filter(character_id=post.character_id)
         .exclude(pk=post.pk)
         .exclude(state=State.SKIPPED)
-        .exists()
-    ):
-        result.append('duplicate')
+    )
+    for other in others:
+        if (
+            other.publish_at == post.publish_at
+            or (post.event_at and other.event_at == post.event_at)
+            or keys & content_keys(other.caption, other.public_facts)
+        ):
+            result.append('duplicate')
+            break
     return result
 
 
@@ -165,103 +180,143 @@ def retry(week_id, post_id, revision, version):
     return {'post_id': post.pk, 'version': version, 'state': post.state}
 
 
-def generate_week(week_id):
-    # Lock calendar rows before the week, also used by calendar editing.
-    with transaction.atomic():
-        start = PublicationWeek.objects.values_list('start', flat=True).get(pk=week_id)
-        end = start + timedelta(days=7)
-        events = list(
-            SchoolEvent.objects.select_for_update()
-            .filter(start_date__lte=end, end_date_exclusive__gt=start)
-            .order_by('pk')
+LEASE = timedelta(seconds=2 * weekly.REQUEST_TIMEOUT + 40)
+MAX_ATTEMPTS = 2  # At most one automatic recovery for calendar changes or an abandoned claim.
+
+
+def available_weeks():
+    return (
+        PublicationWeek.objects.filter(generation='pending')
+        .filter(Q(generation_token=None) | Q(lease_until__lte=timezone.now()))
+        .order_by('pk')
+    )
+
+
+@transaction.atomic
+def claim_week(week_id):
+    week = PublicationWeek.objects.select_for_update().filter(pk=week_id).first()
+    now = timezone.now()
+    if week is None or week.generation != 'pending' or (week.lease_until and week.lease_until > now):
+        return None
+    if week.posts.exists():
+        # Preserve all existing operator work, including a legacy week with inconsistent status.
+        week.generation = 'ready'
+        week.revision = max(week.revision, 1)
+        week.generation_token = week.lease_until = None
+        week.save()
+        return None
+    if week.generation_attempts >= MAX_ATTEMPTS:
+        week.generation, week.generation_error = (
+            'failed',
+            '생성 작업이 중단됐어요. 워커 상태를 확인한 뒤 다시 시도해 주세요.',
         )
-        week = PublicationWeek.objects.select_for_update().get(pk=week_id)
-        if week.generation != 'pending':
-            return
-        people = {c.name: c for c in Character.objects.filter(name__in=['도현', '서윤'])}
-        if people.keys() != {'도현', '서윤'}:
-            week.generation, week.generation_error = 'failed', 'seed_world로 두 캐릭터를 먼저 등록해 주세요.'
-            week.save()
-            return
+        week.generation_token = week.lease_until = None
+        week.save()
+        return None
+    week.generation_token, week.lease_until = uuid4(), now + LEASE
+    week.generation_attempts += 1
+    week.save(update_fields=['generation_token', 'lease_until', 'generation_attempts'])
+    return week
 
-        def candidate(person, day, hour, minute, key, text, facts, event=None):
-            if not start <= day < end:
+
+def current_claim(week):
+    return PublicationWeek.objects.filter(
+        pk=week.pk,
+        generation='pending',
+        generation_token=week.generation_token,
+        lease_until__gt=timezone.now(),
+    )
+
+
+def calendar_changed(week):
+    current_claim(week).update(
+        generation='pending' if week.generation_attempts < MAX_ATTEMPTS else 'failed',
+        generation_token=None,
+        lease_until=None,
+        generation_error='학사 일정이 바뀌었어요. 최신 일정으로 다시 생성해 주세요.',
+    )
+
+
+@transaction.atomic
+def store_week(week, calendar, contexts, rows):
+    # PostgreSQL SHARE blocks all calendar writes (including previously absent rows).
+    # Acquire it before the week lock to match SchoolEvent.save's invalidation order.
+    with connection.cursor() as cursor:
+        cursor.execute('LOCK TABLE world_schoolevent IN SHARE MODE')
+    live = current_claim(week).select_for_update().first()
+    if live is None:
+        return
+    if calendar_for(week.start) != calendar:
+        calendar_changed(week)
+        return
+    selected_keys = {r['photo_id'] for r in rows if r['photo_id']}
+    expected = {
+        (asset['key'], context['character']['id'], asset['alt'])
+        for context in contexts
+        for asset in context['assets']
+        if asset['key'] in selected_keys
+    }
+    owned = set(
+        PostPhoto.objects.select_for_update()
+        .filter(pk__in=selected_keys)
+        .order_by('pk')
+        .values_list('pk', 'character_id', 'alt')
+    )
+    if owned != expected:
+        raise weekly.WeeklyError('사용 가능 사진이 바뀌었어요. 캐릭터의 사진을 확인하고 다시 시도해 주세요.')
+    people = Character.objects.filter(pk__in=[c['character']['id'] for c in contexts]).prefetch_related(
+        'routines'
+    )
+    current_routines = {p.pk: routines_for(p, week.start) for p in people}
+    if any(current_routines.get(c['character']['id']) != c['routines'] for c in contexts):
+        raise weekly.WeeklyError('캐릭터 일과가 바뀌었어요. 새 시간표로 다시 생성해 주세요.')
+    now = world_now()
+    if any(row['publish_at'] <= now for row in rows):
+        raise weekly.WeeklyError('생성 중 예약 시간이 지났어요. 현재 시각으로 다시 생성해 주세요.')
+    for row in rows:
+        ids = row.pop('calendar_ids')
+        post = live.posts.create(**row)
+        post.events.add(*ids)
+        snapshot(post)
+    live.generation, live.generation_error = 'ready', ''
+    live.revision += 1
+    live.generation_token = live.lease_until = None
+    live.save()
+
+
+def generate_week(week_id):
+    week = claim_week(week_id)
+    if week is None:
+        return
+    try:
+        now = world_now()
+        if week.start + timedelta(days=7) <= timezone.localdate(now):
+            raise weekly.WeeklyError(
+                '선택한 주의 발행 기간이 지났어요. 현재 또는 다음 주 계획을 열어 주세요.'
+            )
+        calendar = calendar_for(week.start)
+        rows = []
+        contexts = contexts_for(week.start, calendar, now)
+        for context in contexts:
+            if not current_claim(week).exists():
                 return
-            photo = PostPhoto.objects.filter(pk=key, character=people[person]).first() if key else None
-            post = week.posts.create(
-                character=people[person],
-                caption=text,
-                public_facts=facts,
-                photo=photo,
-                photo_alt=photo.alt if photo else '',
-                publish_at=timezone.make_aware(datetime.combine(day, time(hour, minute))),
-            )
-            if event:
-                post.events.add(event)
-            snapshot(post)
-
-        for event in events:
-            if event.kind == SchoolEvent.Kind.SPORTS:
-                candidate(
-                    '도현',
-                    event.start_date - timedelta(days=1),
-                    17,
-                    50,
-                    'cafe-interior',
-                    '내일 체육대회 몇 시에 모이냐… 커피부터 사야겠다',
-                    ['체육대회 전날 카페에 들렀다.'],
-                    event,
-                )
-            elif event.start_date < end:
-                day = min(
-                    max(start + timedelta(days=2), event.start_date),
-                    event.end_date_exclusive - timedelta(days=1),
-                )
-                if event.kind == SchoolEvent.Kind.EXAMS:
-                    candidate(
-                        '서윤',
-                        day,
-                        16,
-                        30,
-                        'studio-print',
-                        '둘 다 뽑아 보길 잘했다. 오늘은 주황 🍊',
-                        ['군청색과 주황색으로 포스터를 한 장씩 인쇄했다.', '최종 색으로 주황을 골랐다.'],
-                        event,
-                    )
-                    if day + timedelta(days=1) < event.end_date_exclusive:
-                        candidate(
-                            '서윤',
-                            day + timedelta(days=1),
-                            18,
-                            0,
-                            None,
-                            '책상 치우다가 작년 스케치북 발견',
-                            ['책상을 정리하다가 스케치북을 찾았다.'],
-                            event,
-                        )
-                else:
-                    candidate(
-                        '도현',
-                        day,
-                        14,
-                        0,
-                        'cafe-interior',
-                        '방학인데 또 카페 왔음',
-                        ['방학 중 카페에 들렀다.'],
-                        event,
-                    )
-        if not week.posts.exists():
-            candidate(
-                '도현',
-                start + timedelta(days=2),
-                17,
-                55,
-                'cafe-interior',
-                '출근 전에 한 잔만',
-                ['카페에서 일하기 전에 커피를 마셨다.'],
-            )
-        week.generation, week.revision = 'ready', 1
-        week.save(update_fields=['generation', 'revision'])
+            if calendar_for(week.start) != calendar:
+                calendar_changed(week)
+                return
+            output = weekly.propose(context)  # Network I/O runs outside all database transactions.
+            rows.extend(candidates_for(context, output, world_now()))
+        store_week(week, calendar, contexts, rows)
+        return
+    except weekly.WeeklyError as exc:
+        detail = str(exc)
+    except OperationalError:
+        raise  # A durable lease bounds recovery when the database is unavailable.
+    except Exception:
+        logging.getLogger(__name__).exception('Weekly generation failed for week %s', week_id)
+        detail = '후보를 저장하지 못했어요. 워커 기록을 확인한 뒤 다시 시도해 주세요.'
+    current_claim(week).update(
+        generation='failed', generation_error=detail, generation_token=None, lease_until=None
+    )
 
 
 def dispatch_publications(now=None, limit=100):

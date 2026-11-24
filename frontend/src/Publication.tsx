@@ -20,7 +20,10 @@ type Candidate = {
   public_facts: string[]
   photo_id: string | null
   photo_alt: string
+  event_at: string | null
   publish_at: string
+  calendar_labels: string[]
+  operator_note: string
   last_error: string
   issues: string[]
 }
@@ -48,7 +51,8 @@ const issueLabels: Record<string, string> = {
   past_time: '미래 시각 선택',
   outside_week: '선택한 주의 시각으로 변경',
   calendar_conflict: '학사 일정 변경',
-  schedule_conflict: '수면 시간과 겹침',
+  schedule_conflict: '수면 또는 수업 시간과 겹침',
+  event_order: '사건 이후로 발행 시각 변경',
   duplicate: '중복된 소식',
 }
 const stamp = new Intl.DateTimeFormat('ko-KR', {
@@ -169,6 +173,8 @@ function CandidateCard({
   const [alt, setAlt] = useState(post.photo_alt)
   const url = '/api/ops/weeks/' + week.id + '/posts/' + post.post_id + '/'
   async function submit(form: HTMLFormElement) {
+    const fields = new FormData(form)
+    const eventAt = fields.get('event_at')
     if (
       await save(url, 'PATCH', {
         caption,
@@ -178,7 +184,8 @@ function CandidateCard({
           .filter(Boolean),
         photo_id: photo || null,
         photo_alt: alt,
-        publish_at: new FormData(form).get('publish_at') + ':00+09:00',
+        ...(eventAt ? { event_at: eventAt + '+09:00' } : {}),
+        publish_at: fields.get('publish_at') + '+09:00',
       })
     )
       onEdit(false)
@@ -190,7 +197,10 @@ function CandidateCard({
           <strong>{post.name}</strong>
           <span className={'pub-state ' + post.state}>{states[post.state]}</span>
         </div>
-        <time>{stamp.format(new Date(post.publish_at))} KST</time>
+        {post.event_at && <time>사건 · {stamp.format(new Date(post.event_at))} KST</time>}
+        <time>발행 예정 · {stamp.format(new Date(post.publish_at))} KST</time>
+        {post.calendar_labels.length > 0 && <small>관련 일정 · {post.calendar_labels.join(' · ')}</small>}
+        {post.operator_note && <p>운영 메모 · {post.operator_note}</p>}
         {editing ? (
           <form
             onSubmit={(e) => {
@@ -230,12 +240,23 @@ function CandidateCard({
               <input value={alt} maxLength={200} onChange={(e) => setAlt(e.target.value)} />
             </label>
             <label>
+              사건 시각 · 한국 시간
+              <input
+                name="event_at"
+                type="datetime-local"
+                step="1"
+                required={!!post.event_at}
+                defaultValue={post.event_at?.slice(0, 19) || ''}
+              />
+            </label>
+            <label>
               예약 시각 · 한국 시간
               <input
                 name="publish_at"
                 type="datetime-local"
+                step="1"
                 required
-                defaultValue={post.publish_at.slice(0, 16)}
+                defaultValue={post.publish_at.slice(0, 19)}
               />
             </label>
             <button className="accent" disabled={busy}>
@@ -313,7 +334,7 @@ function Studio() {
   const [error, setError] = useState('')
   const [editor, setEditor] = useState<number | null>(null)
   const [waiting, setWaiting] = useState(false)
-  async function openWeek() {
+  async function openWeek(retryFailed = false) {
     setBusy(true)
     setEditor(null)
     setError('')
@@ -321,6 +342,7 @@ function Studio() {
     try {
       const created = await request<{ id: number }>('/api/ops/weeks/generate/', 'POST', {
         week_start: date,
+        retry_failed: retryFailed,
       })
       setWeek(await request<Week>('/api/ops/weeks/' + created.id + '/'))
     } catch (e) {
@@ -407,7 +429,12 @@ function Studio() {
       </form>
       {error && <p role="alert">{error}</p>}
       {waiting && <p role="status">주간 후보를 준비하고 있어요.</p>}
-      {week?.generation === 'failed' && <p role="alert">{week.detail}</p>}
+      {week?.generation === 'failed' && (
+        <>
+          <p role="alert">{week.detail}</p>
+          <button disabled={busy} onClick={() => void openWeek(true)}>후보 생성 다시 시도</button>
+        </>
+      )}
       {week?.generation === 'ready' && (
         <>
           <div className="pub-title pub-sub">

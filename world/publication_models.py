@@ -31,7 +31,7 @@ class SchoolEvent(models.Model):
     def save(self, *args, **kwargs):
         if self._state.adding:
             return super().save(*args, **kwargs)
-        previous = type(self).objects.select_for_update().get(pk=self.pk)
+        previous = type(self).objects.select_for_update(no_key=True).get(pk=self.pk)
         fields = ('label', 'kind', 'start_date', 'end_date_exclusive')
         changed = any(
             getattr(previous, f) != getattr(self, f)
@@ -67,6 +67,9 @@ class PublicationWeek(models.Model):
     revision = models.PositiveIntegerField(default=0)
     generation = models.CharField(max_length=8, default='pending')
     generation_error = models.CharField(max_length=240, blank=True)
+    generation_token = models.UUIDField(null=True, editable=False)
+    lease_until = models.DateTimeField(null=True, editable=False)
+    generation_attempts = models.PositiveSmallIntegerField(default=0, editable=False)
 
     class Meta:
         permissions = [('publish_week', '주간 발행을 관리할 수 있음')]
@@ -88,6 +91,8 @@ class FeedPost(models.Model):
     operator_note = models.TextField(blank=True)
     photo = models.ForeignKey(PostPhoto, null=True, on_delete=models.PROTECT)
     photo_alt = models.CharField(max_length=200, blank=True)
+    # Earlier reviewed posts have no recorded event time.
+    event_at = models.DateTimeField(null=True, blank=True)
     publish_at = models.DateTimeField()
     version = models.PositiveIntegerField(default=1)
     state = models.CharField(max_length=12, choices=State.choices, default=State.DRAFT)

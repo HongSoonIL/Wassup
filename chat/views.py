@@ -19,7 +19,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
-from .models import Friendship, Message, ReplyPlan
+from .models import Friendship, Message, ReplyBubble, ReplyPlan
 from world.clock import routine_at, world_now
 from world.publication import published_posts
 from world.models import FeedPost
@@ -190,8 +190,12 @@ def list_messages(request, room):
         now = world_now()
         expires = room.reply_plans.filter(status=ReplyPlan.Status.READY, typing_at__lte=now,
                                           reply_at__gt=now).values_list('reply_at', flat=True).first()
+        if expires is None:
+            expires = ReplyBubble.objects.filter(
+                plan__room=room, status=ReplyBubble.Status.TYPING, typing_at__lte=now, deliver_at__gt=now,
+            ).values_list('deliver_at', flat=True).first()
         slot = routine_at(room.character, now)
-        data.update(typing_until=iso(expires), current_activity=slot.activity if slot else None)
+        data.update(typing_until=iso(expires, timespec='milliseconds'), current_activity=slot.activity if slot else None)
     return json_response(data)
 
 

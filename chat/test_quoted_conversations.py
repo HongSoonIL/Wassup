@@ -7,10 +7,10 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
-from chat.models import Friendship, Message, ReplyPlan
+from chat.models import Friendship, Message, ReplyBubble, ReplyPlan
 from chat.replies import accept_message, dispatch_due, prepare_next_reply
 from llm.dialogue import context_for
-from world.models import Character, FeedPost, PublicationWeek
+from world.models import Character, FeedPost, Persona, PublicationWeek
 
 
 @override_settings(LLM_BACKEND='openai', LLM_API_KEY='test-only', LLM_MODEL='test-model')
@@ -20,6 +20,7 @@ class QuotedConversationTests(TestCase):
         cls.owner = get_user_model().objects.create_user(username='owner')
         peer = get_user_model().objects.create_user(username='peer')
         cls.artist = Character.objects.create(name='서윤', age=22)
+        Persona.objects.create(character=cls.artist, bubble_min=2, bubble_max=4)
         other = Character.objects.create(name='도현', age=23)
         cls.room = Friendship.objects.create(user=cls.owner, character=cls.artist)
         cls.peer_room = Friendship.objects.create(user=peer, character=cls.artist)
@@ -145,11 +146,79 @@ class QuotedConversationTests(TestCase):
         plan = self.room.reply_plans.get()
         dispatch_due(plan.reply_at)
         dispatch_due(plan.reply_at)
+        self.assertEqual(list(self.room.messages.filter(sender='character').values_list('text', flat=True)),
+                         ['주황이 좋더라'])
+        second = plan.bubbles.get(position=1)
+        dispatch_due(second.typing_at)
+        dispatch_due(second.deliver_at)
         self.assertEqual(
             list(self.room.messages.filter(sender='character').values_list('text', flat=True)),
             ['주황이 좋더라', '같이 뽑아 보길 잘했어'],
         )
         self.assertEqual(plan.model_name, 'test-model')
+
+    def test_a_short_question_can_have_one_model_bubble_for_seoyun(self):
+        accept_message(self.room.pk, '무슨 색으로 골랐어?', self.post.pk)
+        result = {
+            'status': 'completed',
+            'output': [{'type': 'message', 'content': [{'type': 'output_text', 'text': '{"bubbles":["주황"]}'}]}],
+        }
+        with patch('llm.dialogue.urlopen', return_value=io.BytesIO(json.dumps(result).encode())) as transport:
+            prepare_next_reply()
+            prepare_next_reply()
+        transport.assert_called_once()
+        schema = json.loads(transport.call_args.args[0].data)['text']['format']['schema']
+        self.assertEqual(schema['properties']['bubbles']['minItems'], 1)
+        plan = self.room.reply_plans.get()
+        self.assertEqual(plan.model_name, 'test-model')
+        dispatch_due(plan.reply_at)
+        self.assertEqual(plan.bubbles.get().message.text, '주황')
+
+    def test_revocation_between_bubbles_cancels_only_unsent_text(self):
+        self.quote()
+        with patch('chat.replies.openai_reply', return_value=['처음 답장', '회수한 사진의 세부 내용']):
+            prepare_next_reply()
+        plan = self.room.reply_plans.get()
+        dispatch_due(plan.reply_at)
+        second = plan.bubbles.get(position=1)
+        dispatch_due(second.typing_at)
+        self.post.state = 'skipped'
+        self.post.save(update_fields=['state'])
+        dispatch_due(second.deliver_at)
+        dispatch_due(second.deliver_at + timedelta(days=1))
+        self.assertEqual(list(plan.bubbles.values_list('status', flat=True)),
+                         [ReplyBubble.Status.SENT, ReplyBubble.Status.CANCELLED])
+        self.assertEqual(list(self.room.messages.filter(sender='character').values_list('text', flat=True)),
+                         ['처음 답장'])
+
+    def test_sampled_sequence_rechecks_public_version_before_each_bubble(self):
+        self.quote()
+        plan = self.room.reply_plans.get()
+        with override_settings(LLM_BACKEND='fake'):
+            dispatch_due(plan.reply_at)
+        plan.refresh_from_db()
+        self.assertEqual(plan.context_versions, {str(self.post.pk): self.post.version})
+        second = plan.bubbles.get(position=1)
+        self.post.version += 1
+        self.post.save(update_fields=['version'])
+        dispatch_due(second.typing_at)
+        dispatch_due(second.deliver_at)
+        self.assertEqual(self.room.messages.filter(sender='character').count(), 1)
+        plan.refresh_from_db()
+        self.assertEqual(plan.status, ReplyPlan.Status.DISCARDED)
+
+    def test_edited_quote_cannot_reenter_generation_as_a_recent_post(self):
+        self.quote()
+        self.post.version += 1
+        self.post.caption = '사용자가 인용하지 않은 새 내용'
+        self.post.save(update_fields=['version', 'caption'])
+        plan = self.room.reply_plans.get()
+        context = context_for(plan, timezone.now())
+        self.assertIsNone(context['quoted_post_id'])
+        self.assertEqual(context['shared_events'], [])
+        with override_settings(LLM_BACKEND='fake'):
+            dispatch_due(plan.reply_at)
+        self.assertNotIn('주황', plan.bubbles.get().message.text)
 
     def test_long_wait_defers_generation_and_uses_delivery_activity(self):
         from datetime import time

@@ -12,7 +12,7 @@ from django.contrib.auth.models import Permission
 from django.core.files.storage import FileSystemStorage
 from django.core.management import call_command
 from django.db import close_old_connections
-from django.test import Client, TransactionTestCase
+from django.test import Client, TransactionTestCase, override_settings
 
 from chat.models import Friendship
 from world.models import FeedPost, PostPhoto, PublicationWeek, SchoolEvent
@@ -22,6 +22,7 @@ KST = ZoneInfo('Asia/Seoul')
 START = datetime(2027, 4, 19, 9, tzinfo=KST)
 
 
+@override_settings(LLM_BACKEND='fake', LLM_API_KEY='')
 class PublicationTests(TransactionTestCase):
     def setUp(self):
         folder = TemporaryDirectory()
@@ -57,8 +58,9 @@ class PublicationTests(TransactionTestCase):
         self.url = f'/api/ops/weeks/{generated.json()["id"]}/'
         call_command('run_publication_worker', once=True)
         self.post = FeedPost.objects.get(photo_id='studio-print')
-        self.sport = FeedPost.objects.get(photo_id='cafe-interior')
-        self.missing = FeedPost.objects.get(photo=None)
+        self.sport = FeedPost.objects.get(events__kind='sports')
+        self.missing = FeedPost.objects.get(photo=None, character=self.post.character)
+        self.other_missing = FeedPost.objects.get(photo=None, character=self.sport.character)
         self.photo = f'/api/posts/{self.post.pk}/photo/'
 
     def edit(self, pk, rev, **data):
@@ -71,9 +73,13 @@ class PublicationTests(TransactionTestCase):
             self.url + 'approve/', {'expected_revision': rev}, content_type='application/json'
         )
 
-    def schedule(self):
+    def exclude_missing(self):
         self.assertEqual(self.edit(self.missing.pk, 1, state='skipped').status_code, 200)
-        self.assertEqual(self.approve(2).status_code, 200)
+        self.assertEqual(self.edit(self.other_missing.pk, 2, state='skipped').status_code, 200)
+
+    def schedule(self):
+        self.exclude_missing()
+        self.assertEqual(self.approve(3).status_code, 200)
 
     def assert_visible(self, count):
         for client in (self.a, self.b):
@@ -106,7 +112,7 @@ class PublicationTests(TransactionTestCase):
         self.now += timedelta(minutes=2)
         file.write_bytes(original)
         url = self.url + f'posts/{self.post.pk}/retry/'
-        payload = {'expected_revision': 3, 'version': 1}
+        payload = {'expected_revision': 4, 'version': 1}
         for _ in range(2):
             self.assertEqual(self.ops.post(url, payload, content_type='application/json').status_code, 202)
 
@@ -131,13 +137,13 @@ class PublicationTests(TransactionTestCase):
         event = SchoolEvent.objects.get(kind='sports')
         event.start_date, event.end_date_exclusive = date(2027, 5, 1), date(2027, 5, 2)
         event.save()
-        self.assertEqual(PublicationWeek.objects.get().revision, 4)
+        self.assertEqual(PublicationWeek.objects.get().revision, 5)
         self.sport.refresh_from_db()
         self.assertEqual(
             (self.sport.version, self.sport.state, self.sport.approved_version), (2, 'draft', None)
         )
         self.assertEqual(self.sport.versions.count(), 2)
-        self.assertEqual(self.approve(4).status_code, 422)
+        self.assertEqual(self.approve(5).status_code, 422)
         self.now = self.sport.publish_at
         dispatch_publications()
         self.assert_visible(1)
@@ -165,14 +171,14 @@ class PublicationTests(TransactionTestCase):
         )
         self.assertEqual(result.status_code, 200)
         self.assertEqual(PublicationWeek.objects.count(), 1)
-        self.assertEqual(FeedPost.objects.count(), 3)
+        self.assertEqual(FeedPost.objects.count(), 4)
 
     def test_concurrent_editors_approve_once(self):
-        self.edit(self.missing.pk, 1, state='skipped')
+        self.exclude_missing()
 
         def approve_current(_):
             try:
-                approve(self.post.week_id, 2, self.staff)
+                approve(self.post.week_id, 3, self.staff)
                 return 200
             except ReviewError as exc:
                 return exc.status
@@ -185,14 +191,14 @@ class PublicationTests(TransactionTestCase):
 
     def test_photo_replacement_and_reapproval(self):
         self.schedule()
-        self.assertEqual(self.edit(self.post.pk, 3, photo_id=self.sport.photo_id).status_code, 400)
-        self.assertEqual(self.edit(self.post.pk, 3, caption='주황으로 정했다!').status_code, 200)
+        self.assertEqual(self.edit(self.post.pk, 4, photo_id=self.sport.photo_id).status_code, 400)
+        self.assertEqual(self.edit(self.post.pk, 4, caption='주황으로 정했다!').status_code, 200)
         self.now = self.post.publish_at
         dispatch_publications()
         self.assert_visible(0)
         later = self.now + timedelta(minutes=5)
-        self.assertEqual(self.edit(self.post.pk, 4, publish_at=later.isoformat()).status_code, 200)
-        self.assertEqual(self.approve(5).status_code, 200)
+        self.assertEqual(self.edit(self.post.pk, 5, publish_at=later.isoformat()).status_code, 200)
+        self.assertEqual(self.approve(6).status_code, 200)
         self.now = later
         dispatch_publications()
         self.assert_visible(1)
@@ -225,7 +231,7 @@ class PublicationTests(TransactionTestCase):
                 dispatch_publications(self.now)
                 retry_url = self.url + f'posts/{self.post.pk}/retry/'
                 response = self.ops.post(
-                    retry_url, {'expected_revision': 3, 'version': 1}, content_type='application/json'
+                    retry_url, {'expected_revision': 4, 'version': 1}, content_type='application/json'
                 )
                 self.assertEqual(response.status_code, 202)
             finally:

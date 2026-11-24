@@ -1,11 +1,20 @@
-import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, wait
 
 from django.core.management.base import BaseCommand, CommandError
-from django.db import OperationalError, close_old_connections
+from django.db import OperationalError, close_old_connections, connections
 
-from world.models import PublicationWeek
-from world.publication import dispatch_publications, generate_week
+from world.publication import available_weeks, dispatch_publications, generate_week
+
+
+def generate_batch():
+    # Each worker has its own connection and runs at most one paid request at a time.
+    close_old_connections()
+    try:
+        for week_id in list(available_weeks().values_list('pk', flat=True)[:10]):
+            generate_week(week_id)
+    finally:
+        connections.close_all()
 
 
 class Command(BaseCommand):
@@ -19,29 +28,25 @@ class Command(BaseCommand):
         interval = options['interval']
         if not 0 < interval <= 60:
             raise CommandError('interval must be between 0 and 60 seconds.')
-        while True:
-            close_old_connections()
-            try:
-                for week_id in list(
-                    PublicationWeek.objects.filter(generation='pending')
-                    .order_by('pk')
-                    .values_list('pk', flat=True)[:10]
-                ):
-                    try:
-                        generate_week(week_id)
-                    except OperationalError:
+        with ThreadPoolExecutor(max_workers=1) as generator:
+            batch = None
+            while True:
+                close_old_connections()
+                try:
+                    dispatch_publications()
+                    if batch is None:
+                        batch = generator.submit(generate_batch)
+                    if batch.done():
+                        completed, batch = batch, None
+                        completed.result()
+                        if options['once']:
+                            return
+                except OperationalError as exc:
+                    if options['once']:
                         raise
-                    except Exception:
-                        logging.getLogger(__name__).exception('Weekly generation failed for week %s', week_id)
-                        PublicationWeek.objects.filter(pk=week_id, generation='pending').update(
-                            generation='failed',
-                            generation_error='후보를 준비하지 못했어요. 주간 계획을 다시 열어 주세요.',
-                        )
-                dispatch_publications()
-            except OperationalError as exc:
-                if options['once']:
-                    raise
-                self.stderr.write(str(exc))
-            if options['once']:
-                return
-            time.sleep(interval)
+                    self.stderr.write(str(exc))
+                if options['once'] and batch is not None:
+                    # Keep checking due posts while inference is in flight, even for --once.
+                    wait([batch], timeout=interval)
+                else:
+                    time.sleep(interval)

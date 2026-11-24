@@ -1,15 +1,19 @@
+from datetime import timedelta
+
 from asgiref.sync import sync_to_async
 from channels.testing import WebsocketCommunicator
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.test import TransactionTestCase, override_settings
+from django.utils import timezone
 
 from config.asgi import get_application
 
 from world.models import Character
 
 from .live import publish_room_events
-from .models import Friendship
+from .models import Friendship, Message, ReplyPlan
+from .replies import dispatch_due
 
 
 @override_settings(
@@ -59,3 +63,35 @@ class RoomSocketTests(TransactionTestCase):
                 socket = await sync_to_async(self.socket)(user, origin)
                 self.assertFalse((await socket.connect())[0])
                 await socket.disconnect()
+
+    async def test_tabs_receive_the_same_bubble_and_typing_continues_after_a_tab_closes(self):
+        now = timezone.now()
+
+        @sync_to_async
+        def plan_sequence():
+            message = Message.objects.create(room=self.room, sender='user', text='뭐해?', created_at=now)
+            return ReplyPlan.objects.create(room=self.room, trigger_message=message, read_at=now,
+                                            typing_at=now, reply_at=now, result=['알바 끝남', '이제 집 감'])
+
+        plan = await plan_sequence()
+        first_tab, second_tab = [await sync_to_async(self.socket)(self.owner) for _ in range(2)]
+        self.assertTrue((await first_tab.connect())[0])
+        self.assertTrue((await second_tab.connect())[0])
+        try:
+            await sync_to_async(dispatch_due)(now)
+            first_events = [await first_tab.receive_json_from() for _ in range(3)]
+            self.assertEqual([await second_tab.receive_json_from() for _ in range(3)], first_events)
+            self.assertEqual(first_events[-1]['message']['text'], '알바 끝남')
+        finally:
+            await first_tab.disconnect()
+        try:
+            second = await sync_to_async(plan.bubbles.get)(position=1)
+            await sync_to_async(dispatch_due)(second.typing_at)
+            self.assertEqual((await second_tab.receive_json_from())['type'], 'typing.start')
+            await sync_to_async(dispatch_due)(second.deliver_at)
+            self.assertEqual((await second_tab.receive_json_from())['type'], 'typing.stop')
+            self.assertEqual((await second_tab.receive_json_from())['message']['text'], '이제 집 감')
+            await sync_to_async(dispatch_due)(second.deliver_at + timedelta(minutes=1))
+            self.assertTrue(await second_tab.receive_nothing())
+        finally:
+            await second_tab.disconnect()

@@ -3,8 +3,8 @@ from django.utils import timezone
 from world.clock import world_now
 
 
-def iso(dt):
-    return timezone.localtime(dt).isoformat(timespec='seconds') if dt else None
+def iso(dt, *, timespec='seconds'):
+    return timezone.localtime(dt).isoformat(timespec=timespec) if dt else None
 
 
 def quote_json(post):

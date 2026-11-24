@@ -1,6 +1,7 @@
 """Plan a phone check, a short typing window, and delivery on the character's clock."""
 
 import random
+from math import ceil
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
@@ -12,6 +13,7 @@ from world.models import RoutineTemplate, State
 
 AWAKE_LIMIT = timedelta(hours=3)
 CONVERSATION_WINDOW = timedelta(minutes=5)
+PHONE_OPEN_WINDOW = timedelta(seconds=30)
 # Seconds until the next phone check, before the character's speed multiplier.
 CHECK_DELAY = {
     State.FREE: (16, 100),
@@ -28,12 +30,20 @@ class ReplyTiming:
     reply_at: datetime
 
 
+def followup_timing(delivered_at, text, persona=None, rng=random):
+    typing_at = delivered_at + timedelta(seconds=rng.randint(1, 2))
+    cps = persona.typing_speed if persona else 6
+    duration = timedelta(seconds=max(2, min(8, ceil(len(text) / cps))))
+    return typing_at, typing_at + duration
+
+
 def plan_reply(
     received_at: datetime,
     routines: Iterable[RoutineTemplate],
     *,
     persona=None,
     continuing=False,
+    phone_open=False,
     rng=random,
 ) -> ReplyTiming:
     now = timezone.localtime(received_at, timezone.get_default_timezone())
@@ -58,6 +68,8 @@ def plan_reply(
     delay_range = CHECK_DELAY.get(state, (6, 30))
     if state == State.SLEEP:
         delay_range = (15, 240)
+    elif phone_open and state != State.FOCUS:
+        delay_range = (1, 3)
     elif continuing and state == State.FREE:
         delay_range = (3, 10)
     delay = timedelta(seconds=max(2, round(rng.randint(*delay_range) * speed)))

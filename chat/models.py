@@ -68,7 +68,7 @@ class Message(models.Model):
 class ReplyPlan(models.Model):
     """사용자별 층: 답장 계획. "언제 읽고, 언제 입력하고, 언제 답할지"와 미리 만든 답장을 담는다 (설계서 3.4절).
 
-    1단계에서는 모델만 만들고, 계획을 계산해 채우는 일은 2단계 답장 계획기가 한다.
+    read_at, typing_at, reply_at은 첫 말풍선의 일정이다. 후속 발송은 ReplyBubble에서 이어간다.
     """
 
     class Status(models.TextChoices):
@@ -76,6 +76,7 @@ class ReplyPlan(models.Model):
         GENERATING = 'generating', '생성 중'
         READ = 'read', '읽음'
         READY = 'ready', '준비됨'          # 출력 검사를 통과한 답장이 있음
+        SENDING = 'sending', '후속 말풍선 발송 중'
         SENT = 'sent', '보냄'
         FAILED = 'failed', '실패'
         DISCARDED = 'discarded', '버림'    # 답장 전에 새 메시지가 와서 다시 만듦
@@ -114,3 +115,31 @@ class ReplyPlan(models.Model):
 
     def __str__(self):
         return f'{self.room} 답장 {self.reply_at:%m-%d %H:%M} ({self.get_status_display()})'
+
+
+class ReplyBubble(models.Model):
+    """한 답장 안의 순서와 발송 기록. 다음 말풍선만 실제 앞선 발송 시각을 기준으로 예약한다."""
+
+    class Status(models.TextChoices):
+        QUEUED = 'queued', '대기'
+        TYPING = 'typing', '입력 중'
+        SENT = 'sent', '보냄'
+        CANCELLED = 'cancelled', '취소'
+
+    plan = models.ForeignKey(ReplyPlan, on_delete=models.CASCADE, related_name='bubbles')
+    position = models.PositiveSmallIntegerField()
+    text = models.TextField()
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.QUEUED)
+    typing_at = models.DateTimeField(null=True)
+    deliver_at = models.DateTimeField(null=True)
+    message = models.OneToOneField(Message, null=True, on_delete=models.CASCADE, related_name='reply_bubble')
+
+    class Meta:
+        ordering = ['position']
+        constraints = [
+            models.UniqueConstraint(fields=['plan', 'position'], name='replybubble_plan_position'),
+        ]
+        indexes = [
+            models.Index(fields=['status', 'typing_at'], name='replybubble_typing_due'),
+            models.Index(fields=['status', 'deliver_at'], name='replybubble_delivery_due'),
+        ]

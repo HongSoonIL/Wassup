@@ -108,7 +108,8 @@ WASSUP_REPLY_DEMO_SECONDS = int(os.environ.get('WASSUP_REPLY_DEMO_SECONDS', '0')
 CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        'CONFIG': {'hosts': [REDIS_URL]},
+        # Channels blocks for up to five seconds while waiting for a room event.
+        'CONFIG': {'hosts': [{'address': REDIS_URL, 'socket_timeout': 15}]},
     },
 }
 

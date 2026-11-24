@@ -59,6 +59,9 @@ def integer(data, field):
 @operator
 def generate(request):
     data = body(request)
+    retry_failed = data.get('retry_failed', True)
+    if not isinstance(retry_failed, bool):
+        return error(400, '다시 생성할지 확인해 주세요.')
     try:
         start = date.fromisoformat(data.get('week_start'))
         if start.weekday() != 0 or start > date.max - timedelta(days=7):
@@ -68,11 +71,21 @@ def generate(request):
     with transaction.atomic():
         week, _ = PublicationWeek.objects.get_or_create(start=start)
         week = PublicationWeek.objects.select_for_update().get(pk=week.pk)
-        if week.generation == 'failed':
+        if week.generation == 'failed' and retry_failed:
             week.generation, week.generation_error = 'pending', ''
-            week.save(update_fields=['generation', 'generation_error'])
+            week.generation_token = week.lease_until = None
+            week.generation_attempts = 0
+            week.save(
+                update_fields=[
+                    'generation',
+                    'generation_error',
+                    'generation_token',
+                    'lease_until',
+                    'generation_attempts',
+                ]
+            )
     return json_response(
-        {'id': week.id, 'generation': week.generation}, 200 if week.generation == 'ready' else 202
+        {'id': week.id, 'generation': week.generation}, 202 if week.generation == 'pending' else 200
     )
 
 
@@ -83,12 +96,14 @@ def staff_post(post, now):
         'character_id': post.character_id,
         'name': post.character.name,
         'calendar_ids': [e.pk for e in post.events.all()],
+        'calendar_labels': [e.label for e in post.events.all()],
         'state': post.state,
         'public_facts': post.public_facts,
         'operator_note': post.operator_note,
         'caption': post.caption,
         'photo_id': post.photo_id,
         'photo_alt': post.photo_alt,
+        'event_at': iso(post.event_at),
         'publish_at': iso(post.publish_at),
         'published_at': iso(post.published_at),
         'last_error': post.last_error,
@@ -134,6 +149,7 @@ def patch_post(request, week_id, post_id):
         'photo_id',
         'photo_alt',
         'operator_note',
+        'event_at',
         'publish_at',
     }:
         return error(400, '수정할 항목을 확인해 주세요.')
@@ -150,14 +166,16 @@ def patch_post(request, week_id, post_id):
             not isinstance(fact, str) or not fact.strip() for fact in facts
         ):
             return error(400, '공개 사실을 문장 목록으로 입력해 주세요.')
-    if 'publish_at' in data:
+    for field in ('publish_at', 'event_at'):
+        if field not in data:
+            continue
         try:
-            value = parse_datetime(data['publish_at'])
-        except (ValueError, TypeError):
-            value = None
-        if value is None or timezone.is_naive(value):
-            return error(400, '시간대를 포함한 발행 시각을 입력해 주세요.')
-        data['publish_at'] = value
+            value = parse_datetime(data[field])
+            if value is None or timezone.is_naive(value):
+                raise ValueError
+            data[field] = timezone.localtime(value)
+        except (ValueError, TypeError, OverflowError):
+            return error(400, '시간대를 포함한 사건·발행 시각을 입력해 주세요.')
     if data.get('photo_id') is not None:
         character_id = FeedPost.objects.values_list('character_id', flat=True).get(
             pk=post_id, week_id=week_id

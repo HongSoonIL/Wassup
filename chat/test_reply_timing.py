@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 
 from django.test import SimpleTestCase
 
-from chat.reply_timing import plan_reply
+from chat.reply_timing import followup_timing, plan_reply
 from world.management.commands.seed_world import CHARACTERS
 from world.models import Persona, RoutineTemplate, State
 
@@ -18,6 +18,15 @@ def slot(weekday, start, end, state=State.FOCUS):
 
 
 class ReplyTimingTests(SimpleTestCase):
+    def test_followup_pause_and_typing_scale_with_actual_text_and_persona(self):
+        now = at(12)
+        for length, cps, duration in [(1, 5, 2), (25, 5, 5), (25, 10, 3), (1000, 5, 8)]:
+            with self.subTest(length=length, cps=cps):
+                start, finish = followup_timing(now, '가' * length, Persona(typing_speed=cps))
+                self.assertLessEqual(timedelta(seconds=1), start - now)
+                self.assertLessEqual(start - now, timedelta(seconds=2))
+                self.assertEqual(finish - start, timedelta(seconds=duration))
+
     def test_dohyun_shift_from_seed_respects_awake_deadline(self):
         routines = [
             slot(weekday, start, end, state)
@@ -35,6 +44,12 @@ class ReplyTimingTests(SimpleTestCase):
     def test_adjacent_blocks_do_not_create_a_break(self):
         routines = [slot(3, time(19), time(20)), slot(3, time(18), time(19))]
         self.assertTrue(at(20) < plan_reply(at(18, 40), routines).read_at < at(20, 2))
+
+    def test_phone_open_still_respects_new_focus_and_sleep_intervals(self):
+        for state in [State.FOCUS, State.SLEEP]:
+            with self.subTest(state=state):
+                routines = [slot(3, time(19), time(20), state)]
+                self.assertGreater(plan_reply(at(19), routines, phone_open=True).read_at, at(20))
 
     def test_sleep_continues_across_midnight(self):
         routines = [slot(3, time(22), time(0), State.SLEEP), slot(4, time(0), time(7), State.SLEEP)]
