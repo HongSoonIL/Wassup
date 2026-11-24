@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+[ "${WASSUP_ROLE:-web}" = web ] || exit 0
+python manage.py migrate --noinput
+python manage.py seed_world --missing-only
+python manage.py seed_publication

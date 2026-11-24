@@ -11,14 +11,17 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Exists, F, OuterRef, Q
 
+from accounts.birthdays import asks_birthday
 from chat.live import publish_room_events
 from chat.models import Friendship, Message, ReplyBubble, ReplyPlan
 from chat.reply_timing import CONVERSATION_WINDOW, PHONE_OPEN_WINDOW, ReplyTiming, followup_timing, plan_reply
 from chat.serialization import iso, message_json, readable_photo
 from config.llm import model_for
 from llm.chat_photos import POST_LINK_KEY, post_link_is_current
-from llm.dialogue import context_for, fake_reply, openai_reply, sample_reply
-from memory.services import enqueue, history_floor, memory_revision
+from llm import personal_posts
+from chat.birthdays import delivered_in_chat
+from llm.dialogue import context_for, exam_fallback, fake_reply, openai_reply, sample_reply
+from memory.services import enqueue, history_floor, memory_revision, remember_new_result, result_precision_changed
 from world.clock import world_now
 from world.models import PostPhoto
 from world.publication import published_posts
@@ -46,21 +49,35 @@ def cancel_remaining(plan):
     plan.save(update_fields=['status', 'updated_at'])
 
 
+def accept_message(room_id, text, source_post_id=None, *, photo=None, client_message_id=None):
+    message = Message(room_id=room_id, text=text, sender=Message.Sender.USER, user_photo=photo,
+                      kind=Message.Kind.PHOTO if photo else Message.Kind.TEXT, client_message_id=client_message_id)
+    try:
+        return _accept_message(message, source_post_id)
+    except Exception:
+        # File storage isn't rolled back along with the database.
+        if message.user_photo and message.user_photo._committed:
+            if not Message.objects.filter(user_photo=message.user_photo.name).exists():
+                message.user_photo.delete(save=False)
+        raise
+
+
 @transaction.atomic
-def accept_message(room_id, text, source_post_id=None):
+def _accept_message(message, source_post_id):
     # Both message acceptance and dispatch lock the room before touching its plan.
+    room_id = message.room_id
     room = Friendship.objects.select_for_update().get(pk=room_id)
+    if message.client_message_id:
+        previous = room.messages.filter(client_message_id=message.client_message_id).first()
+        if previous:
+            return previous
     now = world_now()
     post = (published_posts(room.character_id, now).select_for_update(no_key=True).get(pk=source_post_id)
             if source_post_id else None)
-    message = Message.objects.create(
-        room=room,
-        sender=Message.Sender.USER,
-        text=text,
-        created_at=now,
-        source_post=post,
-        source_version=post.version if post else None,
-    )
+    message.room, message.created_at = room, now
+    message.source_post, message.source_version = post, post.version if post else None
+    message.save(force_insert=True)
+    remember_new_result(message)
     enqueue(message)
     plan = room.reply_plans.select_for_update().filter(status__in=ACTIVE).first()
     if plan and plan.status == ReplyPlan.Status.SENDING:
@@ -160,7 +177,12 @@ def lock_current_posts(plan, versions, now):
     if not versions:
         return {}
     # Keep a concurrent edit or withdrawal on the same side of commit as our decision.
-    editions = {key: value for key, value in versions.items() if key != POST_LINK_KEY}
+    if personal_posts.KEY in versions and not (
+        personal_posts.quoted_posts(plan.room).filter(pk=versions[personal_posts.KEY])
+        .select_for_update(no_key=True, of=('self',)).exists()
+    ):
+        return None
+    editions = {key: value for key, value in versions.items() if key not in (POST_LINK_KEY, personal_posts.KEY)}
     rows = (published_posts(plan.room.character_id, now).filter(pk__in=editions).select_related('photo')
             .order_by('pk').select_for_update(no_key=True, of=('self',)))
     posts = {str(post.pk): post for post in rows}
@@ -173,6 +195,8 @@ def lock_current_posts(plan, versions, now):
 
 def reply_context_versions(context):
     versions = {str(post['id']): post['version'] for post in context['shared_events']}
+    if personal_posts.KEY in context:
+        versions[personal_posts.KEY] = context[personal_posts.KEY]['id']
     continuity = context.get('post_continuity')
     if continuity:
         previous = continuity['previous']
@@ -204,18 +228,20 @@ def validate_reply_sources(plan, now):
 
 
 def sample_at_deadline(plan, now):
-    context = context_for(plan, now, include_memories=False)
+    context = context_for(plan, now)
     versions = reply_context_versions(context)
     if plan.result or lock_current_posts(plan, versions, now) is None:
         # A prepared sequence lost its source, or this sample's snapshot raced an edit.
         context.update(shared_events=[], quoted_post_id=None, photo_reference_id=None)
         context.pop('post_continuity', None)
+        context.pop(personal_posts.KEY, None)
         versions = {}
     plan.context_versions = versions
     plan.memory_revision = context['memory_revision']
     plan.preference_revision = context['preference_revision']
-    plan.used_memory_ids = []
-    plan.result = sample_reply(context)
+    exam = exam_fallback(context)
+    plan.used_memory_ids = exam['used_memory_ids'] if exam else []
+    plan.result = exam['bubbles'] if exam else sample_reply(context)
     plan.attachment = None
     plan.model_name = 'sample' if settings.LLM_BACKEND == 'fake' else 'fallback'
 
@@ -224,8 +250,10 @@ def deliver_bubble(plan, bubble, now, events, post):
     photo = post if bubble.attachment_post_id else None
     reply = Message.objects.create(room_id=plan.room_id, sender=Message.Sender.CHARACTER,
                                    text=bubble.text, created_at=now,
+                                   birthday_profile_answer=asks_birthday(plan.trigger_message.text),
                                    kind=Message.Kind.PHOTO if photo else Message.Kind.TEXT,
                                    attachment_post=photo, attachment_version=bubble.attachment_version)
+    delivered_in_chat(plan, reply.text, now)
     bubble.message, bubble.status = reply, ReplyBubble.Status.SENT
     bubble.save(update_fields=['message', 'status'])
     events.extend([{'type': 'typing.stop'}, {'type': 'message.new', 'message': message_json(reply, now=now)}])
@@ -245,6 +273,7 @@ def dispatch_followup(plan, now, events):
     # An edit, deletion or opt-out fences at least this trigger. A newer
     # extraction only adds facts and can safely leave an underway reply intact.
     if (plan.preference_revision != preference_revision
+            or result_precision_changed(plan.room_id, plan.reply_at, now)
             or (plan.memory_revision != memory_revision(plan.room_id)
                 and history_floor(plan.room_id) >= plan.trigger_message_id)):
         cancel_remaining(plan)
@@ -291,7 +320,8 @@ def dispatch_first(plan, now, events):
             return
         current, post = (
             validate_reply_sources(plan, now)
-            if plan.result and preference_current and plan.memory_revision == memory_revision(plan.room_id)
+            if (plan.result and preference_current and plan.memory_revision == memory_revision(plan.room_id)
+                and not result_precision_changed(plan.room_id, plan.reply_at, now))
             else (False, None)
         )
         if not current:
@@ -361,7 +391,8 @@ def prepare_next_reply():
         plan = pending.filter(pk=candidate.pk).first()
         if plan is None:
             return False
-        context = context_for(plan, now)
+        photo_fields = []
+        context = context_for(plan, now, photo_fields=photo_fields)
         if plan.preference_revision != context['preference_revision']:
             plan.preference_retry_until = plan.reply_at + PREFERENCE_RETRY_GRACE
         plan.preference_revision = context['preference_revision']
@@ -380,10 +411,12 @@ def prepare_next_reply():
     try:
         if not context['recent_turns']:
             result, model_name = {'bubbles': sample_reply(context), 'used_memory_ids': []}, 'fallback'
+        elif asks_birthday(context['recent_turns'][-1]['text']):
+            result, model_name = {'bubbles': sample_reply(context), 'used_memory_ids': []}, 'profile'
         elif settings.LLM_BACKEND == 'fake':
             result, model_name = fake_reply(context), 'sample'
         else:
-            result = openai_reply(context)
+            result = openai_reply(context, photo_fields=photo_fields) if photo_fields else openai_reply(context)
             model_name = model_for('chat')[: ReplyPlan._meta.get_field('model_name').max_length]
         attachment = selected_attachment(result, context)
     except (HTTPException, OSError, ValueError, KeyError, TypeError, RecursionError) as exc:
@@ -393,7 +426,8 @@ def prepare_next_reply():
             type(exc).__name__,
             getattr(exc, 'code', None),
         )
-        result, model_name = {'bubbles': sample_reply(context), 'used_memory_ids': []}, 'fallback'
+        result = exam_fallback(context) or {'bubbles': sample_reply(context), 'used_memory_ids': []}
+        model_name = 'fallback'
     with transaction.atomic():
         room = Friendship.objects.select_for_update().filter(pk=plan.room_id).first()
         if room is None:

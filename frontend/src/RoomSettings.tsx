@@ -64,8 +64,7 @@ export default function RoomSettings({ room, name }: { room: number; name: strin
     {enabled === null && !error && <p role="status">설정을 불러오는 중…</p>}
     {enabled !== null && <label className="room-contact">
       <span><strong>먼저 연락받기</strong>
-        <small id={descriptionId}>대화 기억에 저장한 일정이 끝난 다음 날, 이 친구에게서 먼저 톡이 올 수 있어요.
-          여러 친구에게 켜도 하루에 한 번만 와요.</small>
+        <small id={descriptionId}>일상·일정에 관한 선톡은 모든 친구를 합쳐 하루 한 번이에요. 공개한 생일에는 이 친구도 따로 축하 톡을 보낼 수 있어요.</small>
       </span>
       <input type="checkbox" checked={enabled} aria-label="먼저 연락받기" aria-describedby={descriptionId}
         disabled={saving} onChange={event => void toggle(event.target.checked)}/>

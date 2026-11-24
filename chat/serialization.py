@@ -39,6 +39,21 @@ def readable_photo(photo):
 
 
 def attachment_json(message, now):
+    if message.sender == 'user' and message.kind == 'photo':
+        field = message.user_photo
+        if not field:
+            return {'status': 'unavailable'}
+        try:
+            with field.storage.open(field.name, 'rb') as stream:
+                if not stream.read(1):
+                    return {'status': 'unavailable'}
+        except (OSError, SuspiciousFileOperation, ValueError):
+            return {'status': 'unavailable'}
+        return {
+            'status': 'available',
+            'photo_url': f'/api/rooms/{message.room_id}/messages/{message.pk}/photo/',
+            'photo_alt': '대화에 보낸 사진',
+        }
     if message.attachment_version is None and message.attachment_post_id is None:
         return None
     post = message.attachment_post
@@ -74,6 +89,17 @@ def message_json(m, *, now=None):
             quote = quote_json(post)
         else:
             quote = {'status': 'unavailable'}
+    elif m.source_personal_post_id or m.source_version is not None:
+        from accounts.models import PersonalPost
+
+        post = PersonalPost.objects.filter(pk=m.source_personal_post_id, owner_id=m.room.user_id).first()
+        quote = {'kind': 'personal', 'status': 'unavailable'}
+        if post:
+            quote = {
+                'kind': 'personal', 'id': post.pk, 'version': 1, 'status': 'available', 'caption': post.caption,
+                'photo_url': f'/api/me/posts/{post.pk}/photo/' if post.photo else None,
+                'photo_alt': '내 게시물 사진' if post.photo else '',
+            }
     data = {
         'id': m.id,
         'sender': m.sender,

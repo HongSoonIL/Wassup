@@ -3,9 +3,8 @@ from datetime import date, timedelta
 from functools import wraps
 
 from django.contrib.auth.decorators import login_required
-from django.core import signing
 from django.db import transaction
-from django.db.models import F, Q
+from django.db.models import F
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
@@ -15,14 +14,15 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
 from chat.models import Friendship
-from chat.serialization import iso, readable_photo
+from chat.serialization import iso
 from chat.views import error, json_response, login_required_json
 from world import photo_jobs
 from world.clock import routine_at, world_now
 from world.models import FeedPost, PostPhoto, PublicationWeek
-from world.post_links import current_previous
 from world.publication import ReviewError, approve, edit, issues, retry
 from world.weekly import bounded_text, due_week_start, normalized, previous_candidates
+
+from .feed import post_page, public_previous
 
 
 def operator(view):
@@ -252,48 +252,13 @@ def visible(user):
     ).select_related('character', 'photo')
 
 
-def page(request, posts):
-    cursor = request.GET.get('cursor')
-    if cursor:
-        try:
-            at, pk = signing.loads(cursor, salt='feed-page')
-        except signing.BadSignature:
-            raise ReviewError(400, 'invalid_cursor', '페이지 위치를 확인해 주세요.')
-        posts = posts.filter(Q(published_at__lt=at) | Q(published_at=at, pk__lt=pk))
-    rows = list(posts.select_related('previous_post__photo').order_by('-published_at', '-pk')[:31])
-    more = len(rows) > 30
-    rows = rows[:30]
-    now = world_now()
-    return {
-        'posts': [
-            {
-                'id': p.pk,
-                'version': p.version,
-                'character_id': p.character_id,
-                'name': p.character.name,
-                'published_at': iso(p.published_at),
-                'caption': p.caption,
-                'previous_post': public_previous(p, now),
-                'photo': {
-                    'url': f'/api/posts/{p.pk}/photo/',
-                    'alt': p.photo_alt,
-                    'ai_generated': p.photo.ai_generated,
-                },
-            }
-            for p in rows
-        ],
-        'next_cursor': signing.dumps([rows[-1].published_at.isoformat(), rows[-1].pk], salt='feed-page')
-        if more
-        else None,
-    }
-
-
 @require_GET
 @never_cache
 @login_required_json
 def feed(request):
     try:
-        return json_response(page(request, visible(request.user)))
+        return json_response(post_page(request.GET.get('cursor'), now=world_now(),
+                                       characters=visible(request.user), personal=request.user.personal_posts.all()))
     except ReviewError as exc:
         return json_response(exc.body, exc.status)
 
@@ -309,7 +274,7 @@ def profile(request, character_id):
     now = timezone.localtime(world_now())
     slot = routine_at(char, now)
     try:
-        result = page(request, visible(request.user).filter(character=char))
+        result = post_page(request.GET.get('cursor'), now=now, characters=visible(request.user).filter(character=char))
     except ReviewError as exc:
         return json_response(exc.body, exc.status)
     return json_response(
@@ -324,22 +289,6 @@ def profile(request, character_id):
             'current_activity': slot.activity if slot else None,
         }
     )
-
-
-def public_previous(post, now):
-    previous = current_previous(post, now)
-    if previous is None or not readable_photo(previous.photo):
-        return None
-    return {
-        'id': previous.pk,
-        'version': previous.version,
-        'caption': previous.caption,
-        'published_at': iso(previous.published_at),
-        'photo': {
-            'url': f'/api/posts/{previous.pk}/photo/?version={previous.version}',
-            'alt': previous.photo_alt,
-        },
-    }
 
 
 def versioned(posts, request, *, required=False):

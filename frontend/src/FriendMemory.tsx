@@ -5,13 +5,15 @@ import './memory.css'
 
 type Memory = {
   id: number
-  kind: 'schedule' | 'preference'
+  kind: 'schedule' | 'preference' | 'result'
   text: string
+  score?: number
+  pinned?: boolean
   event_date: string | null
   source: { id: number; text: string }
 }
-type Snapshot = { enabled: boolean; revision: number; memories: Memory[] }
-type Action = { type: 'edit' | 'delete'; item: Memory } | { type: 'disable' }
+type Snapshot = { enabled: boolean; results_enabled: boolean; revision: number; memories: Memory[] }
+type Action = { type: 'edit' | 'delete'; item: Memory } | { type: 'disable' | 'disableResults' }
 
 export default function FriendMemory({ room, name, defaultOpen = false }: { room: number; name: string; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen)
@@ -81,22 +83,35 @@ function MemorySettings({ room, name, id }: { room: number; name: string; id: st
           <button onClick={() => void change('', 'PATCH', { enabled: false })}>모두 지우고 끄기</button>
           <button onClick={() => setAction(null)}>취소</button>
         </div>}
+        <label><input type="checkbox" checked={snapshot.results_enabled} onChange={event => {
+          if (event.target.checked) void change('', 'PATCH', { results_enabled: true })
+          else setAction({ type: 'disableResults' })
+        }}/> 결과도 기억하기</label>
+        <p>이 방에서 알려 준 시험 점수는 시간이 지나면 흐릿해져요. ‘꼭 기억’을 켜면 정확히 기억해요.</p>
+        {action?.type === 'disableResults' && <div className="memory-confirm">
+          <p>이 친구가 기억하는 시험 결과를 모두 지울까요?</p>
+          <button onClick={() => void change('', 'PATCH', { results_enabled: false })}>결과를 지우고 끄기</button>
+          <button onClick={() => setAction(null)}>취소</button>
+        </div>}
         {!snapshot.memories.length && <p>아직 저장한 기억이 없어요.</p>}
         <ul>{snapshot.memories.map(item => <li key={item.id}>
-          <small>{item.kind === 'schedule' ? '일정' : '취향'} {item.event_date}</small>
-          <p>{item.text}</p>
+          <small>{item.kind === 'schedule' ? '일정' : item.kind === 'result' ? '시험 결과' : '취향'} {item.event_date}</small>
+          <p>{item.text}{item.kind === 'result' && ` · ${item.score}점`}</p>
           <details><summary>내가 보낸 메시지</summary><blockquote>{item.source.text}</blockquote></details>
           {action?.type === 'edit' && action.item.id === item.id ? <form onSubmit={event => {
             event.preventDefault()
             const data = new FormData(event.currentTarget)
-            void change(item.id + '/', 'PATCH', { text: String(data.get('text')).trim(), event_date: data.get('date') || null })
+            void change(item.id + '/', 'PATCH', item.kind === 'result' ? { score: Number(data.get('score')) } : { text: String(data.get('text')).trim(), event_date: data.get('date') || null })
           }}>
-            <label>기억 내용<input name="text" defaultValue={item.text} required maxLength={1000}/></label>
+            {item.kind === 'result'
+              ? <label>시험 점수<input name="score" type="number" min={0} max={100} step={1} defaultValue={item.score} required/></label>
+              : <label>기억 내용<input name="text" defaultValue={item.text} required maxLength={1000}/></label>}
             {item.kind === 'schedule' && <label>날짜<input name="date" type="date" defaultValue={item.event_date || ''}/></label>}
             <button type="submit">수정 저장</button><button type="button" onClick={() => setAction(null)}>취소</button>
           </form> : action?.type === 'delete' && action.item.id === item.id ? <div className="memory-confirm">
             <p>이 기억을 지울까요?</p><button onClick={() => void change(item.id + '/', 'DELETE')}>기억 지우기</button><button onClick={() => setAction(null)}>취소</button>
           </div> : <div className="memory-buttons">
+            {item.kind === 'result' && <button aria-pressed={item.pinned} onClick={() => void change(item.id + '/', 'PATCH', { pinned: !item.pinned })}>{item.pinned ? '꼭 기억 해제' : '꼭 기억'}</button>}
             <button onClick={() => setAction({ type: 'edit', item })}>수정</button>
             <button onClick={() => setAction({ type: 'delete', item })}>삭제</button>
           </div>}

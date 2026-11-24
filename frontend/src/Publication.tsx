@@ -4,8 +4,9 @@ import { ArrowUpRight, CalendarDays, Check, ChevronDown, Image as ImageIcon, Mes
 import './publication.css'
 import { getProfile, returnToLogin } from './chat'
 import type { Friend, PostSummary, Profile } from './chat'
-import { getFeed, PersonProfile } from './FriendsPage'
-import type { FeedPage } from './FriendsPage'
+import { PersonProfile } from './FriendsPage'
+import { getFeed, postKey, usePostTimeline } from './posts'
+import { PersonalPostCard, PersonalPostComposer } from './PersonalPosts'
 import { FriendIdentity, PostPhoto } from './SocialMedia'
 import { isPlainClick } from './ProfileBody'
 import { EmptyState, PageTitle, ReplyToPost, SectionTitle } from './PageParts'
@@ -111,8 +112,7 @@ function profileRoute(): OpenProfile | null {
   return history.state?.wsFeedProfile || null
 }
 function linkedPost() {
-  const match = /^#post-(\d+)$/.exec(location.hash)
-  return match ? Number(match[1]) : null
+  return /^#(?:post|personal)-\d+$/.test(location.hash) ? location.hash.slice(1) : null
 }
 
 function FeedProfileDialog({ route, load, openPost }: {
@@ -163,19 +163,18 @@ function FeedProfileDialog({ route, load, openPost }: {
 }
 
 function Feed({ friends }: { friends?: Friend[] }) {
-  const [page, setPage] = useState<FeedPage | null>(null)
   const people = new Map(friends?.map(friend => [friend.character.id, friend.character]))
-  const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
   const [route, setRoute] = useState(profileRoute)
   const savedPosition = useRef<OpenProfile | null>(history.state?.wsFeedReturn || null)
-  const [target, setTarget] = useState(() => savedPosition.current?.postId || linkedPost())
+  const [target, setTarget] = useState(() => savedPosition.current ? 'post-'+savedPosition.current.postId : linkedPost())
   const [unavailable, setUnavailable] = useState(false)
   const profiles = useRef(new Map<number, Promise<Profile>>())
-  const sequence = useRef(0)
-  const loadedOlder = useRef(false)
-  const loading = useRef(false)
-  const retryCursor = useRef<string | undefined>(undefined)
+  const fetchPage = useCallback(async (cursor?: string) => {
+    const result = await getFeed(cursor)
+    if (!cursor) profiles.current.clear()
+    return result
+  }, [])
+  const { page, load, busy, error, loadedOlder, retry, add, remove } = usePostTimeline(fetchPage)
 
   const loadProfile = useCallback((id: number) => {
     const cached = profiles.current.get(id)
@@ -185,29 +184,7 @@ function Feed({ friends }: { friends?: Friend[] }) {
     return pending
   }, [])
 
-  const load = useCallback(async (cursor?: string) => {
-    if (loading.current) return
-    loading.current = true
-    const current = ++sequence.current
-    setBusy(true)
-    setError('')
-    retryCursor.current = cursor
-    try {
-      const data = await getFeed(cursor)
-      if (sequence.current === current) {
-        loadedOlder.current = !!cursor
-        if (!cursor) profiles.current.clear()
-        setPage(prev => cursor && prev ? { ...data, posts: [...prev.posts, ...data.posts] } : data)
-      }
-    } catch (e) {
-      if (sequence.current === current) setError(reason(e))
-    } finally {
-      if (sequence.current === current) { setBusy(false); loading.current = false }
-    }
-  }, [])
-
   useEffect(() => {
-    void load()
     const refresh = () => {
       if (!document.hidden && !loadedOlder.current && !profileRoute() && !history.state?.wsPhoto && window.scrollY < 8) void load()
     }
@@ -222,21 +199,19 @@ function Feed({ friends }: { friends?: Friend[] }) {
     window.addEventListener('hashchange', hashChanged)
     document.addEventListener('visibilitychange', refresh)
     return () => {
-      sequence.current++
-      loading.current = false
       window.removeEventListener('popstate', restore)
       window.removeEventListener('hashchange', hashChanged)
       document.removeEventListener('visibilitychange', refresh)
     }
-  }, [load])
+  }, [load, loadedOlder])
 
   useEffect(() => {
     if (!target || !page || route || busy || error) return
-    const article = document.getElementById('post-'+target)
+    const article = document.getElementById(target)
     if (article) {
       const position = savedPosition.current
       const author = position && document.getElementById('feed-author-'+position.postId)
-      if (position && author && position.postId === target) {
+      if (position && author && 'post-'+position.postId === target) {
         author.focus({ preventScroll: true })
         window.scrollBy(0, author.getBoundingClientRect().top - position.authorTop)
       } else {
@@ -265,17 +240,19 @@ function Feed({ friends }: { friends?: Friend[] }) {
     history.pushState(null, '', '/feed/#post-'+id)
     setRoute(null)
     setUnavailable(false)
-    setTarget(id)
+    setTarget('post-'+id)
   }
 
   return <>
     <PageTitle action={<button className="feed-refresh" type="button" aria-label="피드 새로고침" disabled={busy} onClick={() => void load()}><RefreshCw size={17}/></button>}>피드</PageTitle>
-    {error && <div role="alert" className="people-alert">{error}<button onClick={() => void load(retryCursor.current)}>다시 시도</button></div>}
+    <PersonalPostComposer onCreate={add}/>
+    {error && <div role="alert" className="people-alert">{error}<button onClick={() => void retry()}>다시 시도</button></div>}
     {unavailable && <p role="status" className="people-note">이 게시물을 볼 수 없어요.</p>}
     {page?.posts.length === 0 && <EmptyState action={<a className="people-secondary" href="/discover/">{friends?.length === 0 ? '첫 친구 만나기' : '친구 찾기'} <ArrowUpRight size={16}/></a>}>{friends?.length === 0 ? '친구를 추가하면 그 친구의 일상이 여기에 보여요.' : '아직 올라온 친구 소식이 없어요.'}</EmptyState>}
     <div className="feed-posts">{page?.posts.map(post => {
+      if (post.kind === 'personal') return <PersonalPostCard key={postKey(post)} post={post} onDelete={remove}/>
       const person = people.get(post.character_id) || { name: post.name, profile_image: null }
-      return <article key={post.id} className="feed-post" id={'post-'+post.id} tabIndex={-1} aria-label={post.name+'의 소식'}>
+      return <article key={postKey(post)} className="feed-post" id={postKey(post)} tabIndex={-1} aria-label={post.name+'의 소식'}>
         <div className="feed-post-head">
           <a className="feed-author" id={'feed-author-'+post.id} href={`/people/${post.character_id}/`}
             aria-label={post.name+' 프로필'} aria-describedby={'feed-time-'+post.id} aria-haspopup="dialog"

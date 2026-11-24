@@ -11,13 +11,15 @@ from django.db import transaction
 from django.db.models import Exists, F, OuterRef, Q, Subquery
 from django.utils import timezone
 
+from chat import birthdays
 from chat.live import publish_room_events
-from chat.models import Friendship, Message, ProactiveClaim, ProactiveDelivery, ReplyPlan
+from chat.models import Friendship, Message, PersonalPostReaction, ProactiveClaim, ProactiveDelivery, ReplyPlan
 from chat.replies import ACTIVE
 from chat.serialization import message_json
 from llm import proactive as provider
+from memory import exam_results
 from memory.models import Memory, RoomMemoryState
-from memory.services import room_memories
+from memory.services import memory_snapshot, room_memories
 from world.clock import active_routines, world_now
 from world.models import State
 
@@ -60,6 +62,12 @@ def _active_claims(user_id, day, now):
     )
 
 
+def _active_reactions(user_id, now):
+    return PersonalPostReaction.objects.filter(
+        post__owner_id=user_id, status=ProactiveClaim.Status.PENDING, token__isnull=False, available_at__gt=now,
+    )
+
+
 def _candidates(day, now):
     room = 'source__room__'
     pending = ReplyPlan.objects.filter(room_id=OuterRef('source__room_id'), status__in=ACTIVE)
@@ -73,8 +81,9 @@ def _candidates(day, now):
             source__room__proactive_enabled=True, source__room__memory_state__enabled=True,
             source_id__gt=F(room + 'memory_state__history_floor'),
         ).filter(
-            ~Exists(pending), ~Exists(deliveries.filter(day=day)),
+            ~Exists(birthdays.blocked(OuterRef(room + 'user_id'), now)), ~Exists(pending), ~Exists(deliveries.filter(day=day)),
             ~Exists(_active_claims(OuterRef(room + 'user_id'), day, now)),
+            ~Exists(_active_reactions(OuterRef(room + 'user_id'), now)),
             Q(proactive_claim__isnull=True)
             | Q(proactive_claim__status=ProactiveClaim.Status.PENDING, proactive_claim__available_at__lte=now),
         ).alias(
@@ -105,10 +114,12 @@ def _context(room, slot, schedule, floor, now):
     # more context. If we cannot see the full relevant interval, decline safely.
     recent = list(room.messages.filter(
         Q(pk__gte=schedule.source_id) | Q(created_at__gte=event_start),
-        pk__gt=floor, created_at__lte=now,
+        birthday_profile_answer=False, pk__gt=floor, created_at__lte=now,
     ).exclude(text='').order_by('pk').values('sender', 'text')[:HISTORY_LIMIT + 1])
     if len(recent) > HISTORY_LIMIT or sum(len(turn['text']) for turn in recent) > HISTORY_CHAR_LIMIT:
         return None
+    _, memories = memory_snapshot(room.pk)
+    exam_results.limit_history(recent, memories, timezone.localdate(now))
     person = room.character
     persona = getattr(person, 'persona', None)
     return {
@@ -139,8 +150,9 @@ def _claim(schedule_id, room_id, user_id, day):
     now = world_now()
     if room is None or _day_in_window(now) != day:
         return None
-    if (ProactiveDelivery.objects.filter(user_id=user_id, day=day).exists()
+    if (birthdays.defer_ordinary(user_id, day, now) or ProactiveDelivery.objects.filter(user_id=user_id, day=day).exists()
             or _active_claims(user_id, day, now).exists()
+            or _active_reactions(user_id, now).exists()
             or room.reply_plans.filter(status__in=ACTIVE).exists()):
         return None
     state = RoomMemoryState.objects.filter(room_id=room.pk).first()
@@ -159,7 +171,7 @@ def _claim(schedule_id, room_id, user_id, day):
     if inbound > claim.inbound_through or claim.attempts >= MAX_ATTEMPTS:
         _release(claim, status=ProactiveClaim.Status.DECLINED)
         return None
-    context = _context(room, slot, schedule, state.history_floor, now)
+    context = _context(room, slot, schedule, max(state.history_floor, state.result_history_floor), now)
     if context is None:
         _release(claim, status=ProactiveClaim.Status.DECLINED)
         return None
@@ -206,6 +218,10 @@ def _finish(followup, text, *, failed=False):
 
     # The user/day unique constraint also covers concurrent attempts in other
     # rooms and survives friendship deletion. Both records commit together.
+    get_user_model().objects.select_for_update(no_key=True).get(pk=room.user_id)
+    if birthdays.defer_ordinary(room.user_id, followup.day, now):
+        _release(claim, at=now + timedelta(minutes=1))
+        return None
     _, created = ProactiveDelivery.objects.get_or_create(
         user_id=room.user_id, day=followup.day, defaults={'room': room, 'sent_at': now},
     )
@@ -225,6 +241,9 @@ def prepare_next_proactive():
     day = _day_in_window(now)
     if day is None:
         return None
+    greeting = birthdays.prepare(day, now)
+    if greeting is not None:
+        return greeting
     for schedule_id, room_id, user_id in _candidates(day, now):
         followup = _claim(schedule_id, room_id, user_id, day)
         if followup is None:
@@ -237,4 +256,6 @@ def prepare_next_proactive():
         if text and any(0xD800 <= ord(char) <= 0xDFFF for char in text):
             text = None
         return _finish(followup, text)
-    return None
+    from chat.personal_reactions import prepare_post_reaction
+
+    return prepare_post_reaction(day, now)

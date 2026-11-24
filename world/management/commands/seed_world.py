@@ -108,11 +108,16 @@ def seed_missing_schedule(character, data):
 class Command(BaseCommand):
     help = '도현·서윤 캐릭터와 페르소나, 기본 주간 일과를 넣는다.'
 
+    def add_arguments(self, parser):
+        parser.add_argument('--missing-only', action='store_true', help='이미 등록한 캐릭터와 일과를 보존한다.')
+
     @transaction.atomic
     def handle(self, *args, **options):
         for data in CHARACTERS:
             info = dict(data['character'])
             name = info.pop('name')
+            if options['missing_only'] and Character.objects.filter(name=name).exists():
+                continue
             character, created = Character.objects.update_or_create(name=name, defaults=info)
             Persona.objects.update_or_create(character=character, defaults=data['persona'])
 

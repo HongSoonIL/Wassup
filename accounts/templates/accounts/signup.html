@@ -4,6 +4,7 @@
   <h1>가입하기</h1><p class="entry-intro">도현과 서윤은 각자의 일상을 보내는 AI 친구예요.</p>
   <form method="post" class="entry-fields">{% csrf_token %}
     {% if form.non_field_errors %}<div role="alert">{{ form.non_field_errors }}</div>{% endif %}
+    {% if form.invite_code %}<label for="{{ form.invite_code.id_for_label }}">초대 코드</label>{{ form.invite_code }}{{ form.invite_code.errors }}{% endif %}
     <label for="{{ form.username.id_for_label }}">아이디</label>{{ form.username }}{{ form.username.errors }}
     <label for="{{ form.password1.id_for_label }}">비밀번호</label>{{ form.password1 }}{{ form.password1.errors }}
     <label for="{{ form.password2.id_for_label }}">비밀번호 확인</label>{{ form.password2 }}{{ form.password2.errors }}

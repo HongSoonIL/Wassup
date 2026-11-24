@@ -1,4 +1,6 @@
-export type Quote = { status: 'available'; id: number; version: number; caption: string; photo_url: string; photo_alt: string } | { status: 'unavailable' }
+type QuoteContent = { status: 'available'; id: number; version: number; caption: string; photo_alt: string }
+export type Quote = (QuoteContent & ({ kind?: 'character'; photo_url: string } | { kind: 'personal'; photo_url: string | null }))
+  | { status: 'unavailable'; kind?: 'personal' | 'character' }
 export type PostSummary = {
   id: number
   version: number
@@ -21,18 +23,20 @@ export type Message = {
   created_at: string
   read_at: string | null
   source_post?: Quote | null
-  attachment?: Quote | null
+  attachment?: { status: 'available'; id?: number; version?: number; photo_url: string; photo_alt: string } | { status: 'unavailable' } | null
   photo?: string
 }
 
 export function messagePhoto(message: Message) {
+  const uploadKey = `upload:${message.id}`
   const attachment = message.attachment
   if (message.kind === 'photo' && attachment?.status === 'available' && attachment.photo_url) {
     return { src: attachment.photo_url, alt: attachment.photo_alt,
-      viewerKey: `attachment:${message.id}:${attachment.id}:${attachment.version}` }
+      viewerKey: message.sender === 'user' ? uploadKey : `attachment:${message.id}:${attachment.id}:${attachment.version}` }
   }
   if (attachment === undefined && message.photo) {
-    return { src: message.photo, alt: message.text || '대화에서 받은 사진', viewerKey: `preview:${message.id}` }
+    return { src: message.photo, alt: message.text || (message.sender === 'user' ? '내가 보낸 사진' : '대화에서 받은 사진'),
+      viewerKey: message.sender === 'user' ? uploadKey : `preview:${message.id}` }
   }
 }
 
@@ -63,8 +67,13 @@ export class RequestError extends Error {
   }
 }
 
-async function apiResponse(url: string, init?: RequestInit) {
-  const res = await fetch(url, { cache: 'no-store', ...init })
+export async function apiResponse(url: string, init?: RequestInit) {
+  let res: Response
+  try { res = await fetch(url, { cache: 'no-store', ...init }) }
+  catch (error) {
+    if (error instanceof TypeError) throw new Error('연결을 확인하고 다시 시도해 주세요.')
+    throw error
+  }
   if (res.status === 401) returnToLogin()
   if (!res.ok) {
     const body = await res.json().catch(() => null)
@@ -130,14 +139,25 @@ export function markRead(room: number, through: number) {
   })
 }
 
-export async function sendMessage(room: number, text: string, quote: Quote | null = null): Promise<Message> {
+export async function sendMessage(room: number, text: string, quote: Quote | null, key: string, photo?: File): Promise<Message> {
   const csrf = csrfToken()
   if (!csrf) throw new Error('세션을 확인한 뒤 새로고침해 주세요.')
-  const receipt = await request<Pick<Message, 'id' | 'status' | 'created_at'>>(
-    '/api/rooms/' + room + '/messages/',
-    { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf }, body: JSON.stringify(quote?.status === 'available' ? { text, source_post_id: quote.id } : { text }) },
-  )
-  return { ...receipt, sender: 'user', kind: 'text', text, source_post: quote, read_at: null }
+  const source = quote?.status === 'available' && quote.kind !== 'personal' ? quote.id : undefined
+  let body: FormData | string
+  const headers: Record<string, string> = { 'X-CSRFToken': csrf, 'Idempotency-Key': key }
+  if (photo) {
+    body = new FormData()
+    body.set('text', text)
+    body.set('photo', photo)
+    if (source !== undefined) body.set('source_post_id', String(source))
+  } else {
+    headers['Content-Type'] = 'application/json'
+    body = JSON.stringify({ text, source_post_id: source })
+  }
+  const receipt = await request<Pick<Message, 'id' | 'status' | 'created_at'> & Partial<Message>>(
+    `/api/rooms/${room}/messages/`, { method: 'POST', headers, body })
+  const attachment = photo ? { status: 'available' as const, photo_url: `/api/rooms/${room}/messages/${receipt.id}/photo/`, photo_alt: '대화에 보낸 사진' } : undefined
+  return { sender: 'user', kind: photo ? 'photo' : 'text', text, source_post: quote, read_at: null, attachment, ...receipt }
 }
 
 export function mergeMessages(previous: Message[], incoming: Message[]) {

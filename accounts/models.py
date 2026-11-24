@@ -2,7 +2,11 @@ from unicodedata import category
 
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import models, transaction
+from django.db.models.signals import pre_delete
+from django.dispatch import receiver
+
+from .private_photos import user_photo_storage
 
 
 PREFERENCE_TAGS = frozenset({'커피', '음악', '산책', '영화', '음식', '운동'})
@@ -47,6 +51,9 @@ class User(AbstractUser):
     )
     preference_revision = models.PositiveBigIntegerField(default=0, db_default=0, editable=False)
     # 만 18세 이상만 가입한다 (설계서 2.3절). 나이 확인은 가입 API(부록 B)에서 한다.
+    birthday_month = models.PositiveSmallIntegerField(null=True, blank=True)
+    birthday_day = models.PositiveSmallIntegerField(null=True, blank=True)
+    birthday_shared = models.BooleanField(default=False, db_default=False)
     birth_year = models.PositiveSmallIntegerField('생년', null=True, blank=True)
     agreed_at = models.DateTimeField('대화 저장·AI 고지 동의 시각', null=True, blank=True)
     # 선톡은 켠 사용자에게만 보낸다 (설계서 3.8절)
@@ -55,3 +62,28 @@ class User(AbstractUser):
 
     def __str__(self):
         return self.nickname or self.username
+
+
+class SignupInvite(models.Model):
+    digest = models.CharField(max_length=64, unique=True)
+    expires_at = models.DateTimeField()
+    redeemed_at = models.DateTimeField(null=True)
+
+
+class PersonalPost(models.Model):
+    owner = models.ForeignKey(User, related_name='personal_posts', on_delete=models.CASCADE)
+    client_post_id = models.UUIDField(null=True, editable=False)
+    caption = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    photo = models.ImageField(storage=user_photo_storage, upload_to='personal-posts/', blank=True)
+
+    class Meta:
+        indexes = [models.Index(fields=['owner', '-created_at', '-id'], name='personal_post_owner_date')]
+        constraints = [models.UniqueConstraint(fields=['owner', 'client_post_id'], name='personal_post_owner_client_id')]
+
+
+@receiver(pre_delete, sender=PersonalPost)
+def remove_post_photo(sender, instance, using, **kwargs):
+    if instance.photo:
+        storage, name = instance.photo.storage, instance.photo.name
+        transaction.on_commit(lambda: storage.delete(name), using=using)

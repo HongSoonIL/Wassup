@@ -33,3 +33,4 @@ celerybeat.pid
 .DS_Store
 Thumbs.db
 /private-media/
+/.local-only/

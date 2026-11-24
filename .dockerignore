@@ -1,0 +1,14 @@
+**/.DS_Store
+**/__pycache__
+.env*
+.git
+.local-only
+.venv
+.ruff_cache
+frontend/node_modules
+frontend/dist*
+media
+private-media
+staticfiles
+docs
+*.pdf

@@ -7,6 +7,7 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods
 
+from world.clock import world_now
 from chat.models import Friendship
 from chat.views import error, json_response, login_required_json
 from . import services
@@ -14,6 +15,16 @@ from .models import Memory
 
 
 def _edit_fields(body, kind):
+    if kind == Memory.Kind.RESULT:
+        if not body or not body.keys() <= {'score', 'pinned'}:
+            raise ValueError('점수 또는 꼭 기억 여부를 보내 주세요.')
+        if 'pinned' in body and type(body['pinned']) is not bool:
+            raise ValueError('꼭 기억 여부를 확인해 주세요.')
+        if 'score' in body:
+            if type(body['score']) is not int or not 0 <= body['score'] <= 100:
+                raise ValueError('점수는 0부터 100까지의 정수로 보내 주세요.')
+            body['confirmed_at'] = world_now()
+        return body
     if not body or not body.keys() <= {'text', 'event_date'}:
         raise ValueError('수정할 기억 내용이나 날짜를 보내 주세요.')
     if 'text' in body:
@@ -58,9 +69,15 @@ def _manage(request, room_id, memory_id=None):
         snapshot['detail'] = '기억이 변경됐어요. 새로고침한 뒤 다시 시도해 주세요.'
         return json_response(snapshot, status=409)
     if memory_id is None:
-        if set(body) != {'enabled'} or type(body['enabled']) is not bool:
+        if set(body) == {'results_enabled'} and type(body['results_enabled']) is bool:
+            try:
+                services.set_results_enabled(state, body['results_enabled'])
+            except ValueError as exc:
+                return error(400, str(exc))
+        elif set(body) != {'enabled'} or type(body['enabled']) is not bool:
             return error(400, 'enabled 값은 true나 false로 보내 주세요.')
-        services.set_enabled(state, body['enabled'])
+        else:
+            services.set_enabled(state, body['enabled'])
     else:
         memory = services.room_memories(room_id).filter(pk=memory_id).first() if state.enabled else None
         if memory is None:

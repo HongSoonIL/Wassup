@@ -16,3 +16,4 @@
 .memory-settings label { display: block; margin-bottom: 6px; }
 .memory-settings input { display: block; width: 100%; border: 1px solid #cbd1c2; border-radius: 7px; padding: 6px; font: inherit; }
 .memory-actions .memory-refresh { margin-left: auto; }
+.memory-settings input[type=checkbox] { display: inline-block; width: auto; accent-color: var(--color-lime); }

@@ -1,0 +1,14 @@
+.env*
+.git/
+.local-only/
+.venv/
+.ruff_cache/
+**/__pycache__/
+**/.DS_Store
+frontend/node_modules/
+frontend/dist*/
+media/
+private-media/
+staticfiles/
+docs/
+*.pdf

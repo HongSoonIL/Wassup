@@ -11,9 +11,11 @@ X-CSRFToken 헤더에 담아 보내야 한다. 없으면 Django가 403을 돌려
 """
 import json
 from functools import wraps
+from uuid import UUID
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Count, F, OuterRef, Q, Subquery
 from django.http import HttpResponse, JsonResponse
@@ -22,6 +24,7 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
+from accounts.private_photos import normalize_photo, private_photo_response
 from .models import Friendship, Message, ReplyBubble, ReplyPlan
 from world.clock import active_routines, routine_at, world_now
 from world.publication import published_posts
@@ -199,22 +202,46 @@ def room_messages(request, room_id):
 
 
 def send_message(request, room):
-    """POST /api/rooms/{id}/messages/ {"text": "..."} → 201."""
-    try:
-        body = json.loads(request.body)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return error(400, 'JSON 형식이 아니에요.')
-    text = body.get('text') if isinstance(body, dict) else None
-    if not isinstance(text, str) or not text.strip():
+    """Accept JSON text or a multipart message with one private photo."""
+    multipart = request.content_type == 'multipart/form-data'
+    upload = None
+    if multipart:
+        body = request.POST
+        uploads = request.FILES.getlist('photo')
+        if len(uploads) > 1 or set(request.FILES) - {'photo'}:
+            return error(400, '사진은 한 번에 한 장만 보낼 수 있어요.')
+        if 'photo' in body:
+            return error(400, '사진 파일을 선택해 주세요.')
+        upload = uploads[0] if uploads else None
+    else:
+        try:
+            body = json.loads(request.body)
+        except (ValueError, RecursionError):
+            return error(400, 'JSON 형식이 아니에요.')
+    text = body.get('text', '') if isinstance(body, dict) else None
+    if not isinstance(text, str) or (not text.strip() and upload is None):
         return error(400, 'text를 입력해 주세요.')
     if len(text) > MESSAGE_MAX_LENGTH:
         return error(400, f'메시지는 {MESSAGE_MAX_LENGTH}자까지 보낼 수 있어요.')
+    if '\x00' in text or any('\ud800' <= char <= '\udfff' for char in text):
+        return error(400, '메시지에 저장할 수 없는 문자가 있어요.')
 
     source_id = body.get('source_post_id')
+    if multipart and source_id and source_id.isascii() and source_id.isdecimal() and len(source_id) <= 19:
+        source_id = int(source_id)
     if 'source_post_id' in body and (type(source_id) is not int or not 0 < source_id < 2**63):
         return error(400, 'source_post_id는 양의 정수여야 해요.')
+    client_id = request.headers.get('Idempotency-Key', body.get('client_message_id'))
+    if client_id is not None:
+        try:
+            client_id = UUID(str(client_id))
+        except ValueError:
+            return error(400, '메시지 전송 번호를 확인해 주세요.')
     try:
-        message = accept_message(room.id, text, source_id)
+        photo = normalize_photo(upload) if upload is not None else None
+        message = accept_message(room.id, text, source_id, photo=photo, client_message_id=client_id)
+    except ValidationError as exc:
+        return error(400, exc.messages[0])
     except Friendship.DoesNotExist:
         return error(404, '채팅방을 찾을 수 없어요.')
     except FeedPost.DoesNotExist:
@@ -223,6 +250,17 @@ def send_message(request, room):
         {'id': message.id, 'status': message.status, 'created_at': iso(message.created_at)},
         status=201,
     )
+
+
+@require_GET
+@never_cache
+@login_required_json
+def room_photo(request, room_id, message_id):
+    message = get_object_or_404(
+        Message, pk=message_id, room_id=room_id, room__user=request.user,
+        sender=Message.Sender.USER, kind=Message.Kind.PHOTO,
+    )
+    return private_photo_response(message.user_photo)
 
 
 def list_messages(request, room):

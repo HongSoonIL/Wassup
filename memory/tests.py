@@ -55,7 +55,7 @@ class MemoryTests(TestCase):
 
     def enable(self, room):
         response = self.patch(room, {'expected_revision': 0, 'enabled': True})
-        self.assertEqual(response.json(), {'enabled': True, 'revision': 1, 'memories': []})
+        self.assertEqual(response.json(), {'enabled': True, 'results_enabled': False, 'revision': 1, 'memories': []})
 
     def remember_exam(self):
         self.enable(self.room)
@@ -67,7 +67,7 @@ class MemoryTests(TestCase):
         old = Message.objects.create(room=self.room, sender=Message.Sender.USER, text='예전 대화')
         services.enqueue(old)
         response = self.client.get(url(self.room))
-        self.assertEqual(response.json(), {'enabled': False, 'revision': 0, 'memories': []})
+        self.assertEqual(response.json(), {'enabled': False, 'results_enabled': False, 'revision': 0, 'memories': []})
         self.assertIn('csrftoken', response.cookies)
         self.assertEqual(services.history_floor(self.room.pk), 0)
         self.assertFalse(RoomMemoryState.objects.exists())
@@ -95,7 +95,7 @@ class MemoryTests(TestCase):
         public = {'id': item.pk, 'kind': 'schedule', 'text': EXAM['text'], 'event_date': '2027-04-22'}
         self.assertEqual(services.memory_snapshot(self.room.pk), (2, [public]))
         self.assertEqual(self.client.get(url(self.room)).json(), {
-            'enabled': True, 'revision': 2, 'memories': [
+            'enabled': True, 'results_enabled': False, 'revision': 2, 'memories': [
                 {**public, 'source': {'id': first.message_id, 'text': first.message.text}}
             ],
         })
@@ -172,7 +172,7 @@ class MemoryTests(TestCase):
         self.enable(self.other_friend)
         elsewhere = claim_message(self.other_friend, '홍차가 좋아.')
         deleted = self.client.delete(url(self.room, item.pk), {'expected_revision': 2}, content_type='application/json')
-        self.assertEqual(deleted.json(), {'enabled': True, 'revision': 3, 'memories': []})
+        self.assertEqual(deleted.json(), {'enabled': True, 'results_enabled': False, 'revision': 3, 'memories': []})
         self.assertFalse(Memory.objects.exists())
         self.assertTrue(Message.objects.filter(pk=source.pk, text=source.text).exists())
         self.assertEqual(services.history_floor(self.room.pk), pending.message_id)
@@ -187,7 +187,7 @@ class MemoryTests(TestCase):
         self.remember_exam()
         old = claim_message(self.room, '통계 시험 날짜가 맞아.')
         disabled = self.patch(self.room, {'enabled': False, 'expected_revision': 2})
-        self.assertEqual(disabled.json(), {'enabled': False, 'revision': 3, 'memories': []})
+        self.assertEqual(disabled.json(), {'enabled': False, 'results_enabled': False, 'revision': 3, 'memories': []})
         self.assertFalse(Memory.objects.exists())
         self.assertFalse(MemoryJob.objects.exists())
         self.assertEqual(services.history_floor(self.room.pk), old.message_id)

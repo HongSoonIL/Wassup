@@ -1,0 +1,18 @@
+.personal-composer { display: grid; gap: 10px; min-width: 0; margin-bottom: 22px; padding: 16px 18px 12px; border: 1px solid var(--ws-line); border-radius: var(--ws-radius); background: var(--ws-surface); }
+.personal-composer > label { font-size: var(--ws-body); font-weight: 650; }
+.personal-composer textarea { width: 100%; min-height: 58px; max-height: 30dvh; resize: vertical; font: inherit; line-height: 1.55; color: var(--ws-ink); }
+.personal-composer textarea::placeholder { color: #6a7562; }
+.personal-controls { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--ws-line); padding-top: 8px; }
+.personal-controls .photo-picker { margin-left: -7px; }
+.personal-controls .people-primary { margin-left: auto; }
+.post-disclosure { display: flex; align-items: flex-start; gap: 6px; color: var(--ws-muted); font-size: 12px; line-height: 1.55; word-break: keep-all; overflow-wrap: anywhere; }
+.post-disclosure svg { flex: none; margin-top: 2px; }
+.post-success { color: var(--ws-muted); font-size: var(--ws-meta); }
+.personal-avatar { display: grid; place-items: center; width: 42px; height: 42px; flex: none; border-radius: 35%; background: #ecf2dd; color: #465737; }
+.post-remove { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; color: var(--ws-muted); }
+.post-remove:hover { background: #f5f1ed; color: #912f22; }
+.personal-post .feed-post-foot > p { margin: 0; }
+.personal-post .feed-post-head + .feed-post-foot { padding-top: 0; }
+.post-delete-confirm { display: grid; gap: 10px; padding: 14px 18px; border-top: 1px solid var(--ws-line); background: var(--ws-paper); font-size: var(--ws-control); }
+.post-delete-confirm > div { display: flex; gap: 8px; }
+.post-delete-action { min-height: 44px; padding: 0 17px; border-radius: 13px; background: #912f22; color: white; font-weight: 600; }

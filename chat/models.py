@@ -1,7 +1,10 @@
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
 from django.db.models import F, Q
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
 
+from accounts.private_photos import user_photo_storage
 from world.clock import world_now
 from world.models import Character
 
@@ -33,6 +36,9 @@ class Friendship(models.Model):
 class Message(models.Model):
     """사용자별 층: 채팅방의 말풍선 하나."""
 
+    # Derived profile data stays visible in chat but is never replayed as a user disclosure.
+    birthday_profile_answer = models.BooleanField(default=False, db_default=False)
+
     class Sender(models.TextChoices):
         USER = 'user', '사용자'
         CHARACTER = 'character', '캐릭터'
@@ -45,7 +51,13 @@ class Message(models.Model):
     sender = models.CharField('보낸 쪽', max_length=10, choices=Sender.choices)
     kind = models.CharField('종류', max_length=10, choices=Kind.choices, default=Kind.TEXT)
     text = models.TextField('내용', blank=True)
+    user_photo = models.ImageField(storage=user_photo_storage, upload_to='chat/', blank=True, db_default='', editable=False)
+    client_message_id = models.UUIDField(null=True, editable=False)
     source_post = models.ForeignKey('world.FeedPost', null=True, blank=True, on_delete=models.PROTECT)
+    # Personal posts have one edition. source_version preserves the quote marker after deletion.
+    source_personal_post = models.OneToOneField(
+        'accounts.PersonalPost', null=True, blank=True, on_delete=models.SET_NULL, related_name='reaction_message',
+    )
     source_version = models.PositiveIntegerField(null=True, blank=True)
     attachment_post = models.ForeignKey(
         'world.FeedPost', null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
@@ -61,6 +73,9 @@ class Message(models.Model):
         indexes = [
             models.Index(fields=['room', '-id'], name='message_room_recent'),
         ]
+        constraints = [
+            models.UniqueConstraint(fields=['room', 'client_message_id'], name='chat_room_client_message'),
+        ]
 
     def __str__(self):
         return f'[{self.get_sender_display()}] {self.text[:30]}'
@@ -69,6 +84,13 @@ class Message(models.Model):
     def status(self):
         """API에 내보내는 상태. 읽은 시각에서 바로 나오므로 따로 저장하지 않는다."""
         return 'read' if self.read_at else 'sent'
+
+
+@receiver(post_delete, sender=Message)
+def delete_user_photo(sender, instance, using, **kwargs):
+    if instance.user_photo:
+        storage, name = instance.user_photo.storage, instance.user_photo.name
+        transaction.on_commit(lambda: storage.delete(name), using=using)
 
 
 class ReplyPlan(models.Model):
@@ -191,3 +213,27 @@ class ProactiveDelivery(models.Model):
     class Meta:
         constraints = [models.UniqueConstraint(fields=['user', 'day'], name='proactive_user_day')]
         indexes = [models.Index(fields=['room', '-sent_at'], name='proactive_last_delivery')]
+
+
+class PersonalPostReaction(models.Model):
+    post = models.OneToOneField('accounts.PersonalPost', on_delete=models.CASCADE, related_name='reaction')
+    status = models.CharField(max_length=8, choices=ProactiveClaim.Status.choices, default=ProactiveClaim.Status.PENDING)
+    token = models.UUIDField(null=True, editable=False)
+    available_at = models.DateTimeField(null=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    # Kept only with the source so later turns can use the original visual evidence.
+    photo_description = models.TextField(blank=True)
+
+
+class BirthdayGreeting(models.Model):
+    """Annual delivery or expiring generation claim, independent of the friendship's lifetime."""
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    character = models.ForeignKey(Character, on_delete=models.CASCADE)
+    year = models.PositiveSmallIntegerField()
+    sent_at = models.DateTimeField(null=True)
+    token = models.UUIDField(null=True)
+    lease_until = models.DateTimeField(null=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['user', 'character', 'year'], name='birthday_friend_year')]
+        indexes = [models.Index(fields=['user', '-sent_at'], name='birthday_last_greeting')]

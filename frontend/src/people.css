@@ -9,7 +9,7 @@
 
 .entry { display:grid; align-content:center; padding:36px 24px }
 .entry-shell { display:grid; grid-template-columns:minmax(0,.94fr) minmax(0,1fr); width:min(960px,100%); margin:auto; background:white; border:1px solid #dbe0d4; border-radius:28px; overflow:hidden; box-shadow:0 8px 36px #34451c0a }
-.entry-photo { min-height:550px; padding:34px; background-color:#59604d; background-image:linear-gradient(165deg,#161d1578,transparent 65%),url('./design/assets/cafe-interior.webp'); background-position:center; background-size:cover }
+.entry-photo { min-height:550px; padding:34px; background-color:#59604d; background-image:linear-gradient(165deg,#161d1578,transparent 65%),url('./assets/cafe.webp'); background-position:center; background-size:cover }
 .entry-photo .people-logo { color:white; font-size:46px }
 .entry-photo .people-logo span { color:#d4f462 }
 .entry-panel { padding:36px clamp(24px,4.4vw,62px); align-self:center }

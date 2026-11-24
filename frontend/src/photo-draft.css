@@ -1,0 +1,18 @@
+.photo-picker,.upload-remove { display: inline-flex; align-items: center; justify-content: center; flex: none; gap: 7px; min-height: 44px; padding: 0 10px; border-radius: 12px; color: var(--ws-muted); font-size: var(--ws-control); font-weight: 600; }
+.photo-picker.compact,.upload-remove { width: 44px; padding: 0; border-radius: 50%; }
+.photo-picker:hover,.upload-remove:hover { background: #eaf0e2; }
+.photo-picker:disabled,.upload-remove:disabled { opacity: .5; }
+.upload-preview { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 7px; border: 1px solid var(--ws-line); border-radius: 14px; background: var(--ws-paper); }
+.upload-preview .draft-thumbnail { width: 58px; height: 58px; flex: none; border-radius: 9px; }
+.upload-copy { min-width: 0; flex: 1; display: grid; gap: 3px; }
+.upload-filename { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--ws-control); font-weight: 600; }
+.upload-copy small,.upload-status { color: var(--ws-muted); font-size: 12px; line-height: 1.45; }
+.upload-status { display: flex; align-items: center; gap: 5px; }
+.upload-error { color: #912f22; font-size: var(--ws-control); }
+.upload-error button { text-decoration: underline; text-underline-offset: 3px; padding: 6px; }
+.foot > .upload-preview,.foot > .upload-error { max-width: 800px; margin: 0 auto 8px; }
+.foot .composer { padding-inline-start: 4px; gap: 4px; }
+@media (prefers-reduced-motion: no-preference) {
+  .upload-status svg { animation: upload-rotate 1.2s linear infinite; }
+  @keyframes upload-rotate { to { transform: rotate(360deg); } }
+}

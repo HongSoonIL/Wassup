@@ -5,10 +5,11 @@ from datetime import date
 from django.contrib.postgres.expressions import ArraySubquery
 from django.db import transaction
 from django.db.models import OuterRef
-from django.db.models.functions import JSONObject
+from django.db.models.functions import Greatest, JSONObject
 from django.utils import timezone
 
 from chat.models import Friendship, Message
+from . import exam_results
 from .models import Memory, MemoryJob, RoomMemoryState
 
 
@@ -19,17 +20,22 @@ def room_memories(room_id):
 def _snapshot(room_id, *, include_source):
     # Read revision and facts in one PostgreSQL statement. A reader holding a reply-plan
     # lock never has to acquire the room lock, and cannot pair an old revision with new facts.
-    fields = dict(id='id', kind='kind', text='text', event_date='event_date')
+    fields = dict(id='id', kind='kind', text='text', event_date='event_date',
+                  score='score', pinned='pinned', confirmed_at='confirmed_at')
     if include_source:
         fields['source'] = JSONObject(id='source_id', text='source__text')
     facts = room_memories(OuterRef('room_id')).order_by('id').values(fact=JSONObject(**fields))
     state = RoomMemoryState.objects.filter(pk=room_id).values(
-        'enabled', 'revision', memories=ArraySubquery(facts)
+        'enabled', 'results_enabled', 'revision', memories=ArraySubquery(facts)
     ).first()
     if state is None:
-        return {'enabled': False, 'revision': 0, 'memories': []}
+        return {'enabled': False, 'results_enabled': False, 'revision': 0, 'memories': []}
     if not state['enabled']:
         state['memories'] = []
+    for fact in state['memories']:
+        if fact['kind'] != Memory.Kind.RESULT:
+            for key in ('score', 'pinned', 'confirmed_at'):
+                del fact[key]
     return state
 
 
@@ -42,8 +48,19 @@ def memory_snapshot(room_id):
     return state['revision'], state['memories']
 
 
+def result_precision_changed(room_id, planned_at, delivery_at):
+    before, after = timezone.localdate(planned_at), timezone.localdate(delivery_at)
+    if before >= after:
+        return False
+    for item in room_memories(room_id).filter(kind=Memory.Kind.RESULT, pinned=False).values(
+            'id', 'text', 'confirmed_at', 'score', 'pinned'):
+        if exam_results.project(item, before)['precision'] != exam_results.project(item, after)['precision']:
+            return True
+    return False
+
+
 def history_floor(room_id):
-    return RoomMemoryState.objects.filter(pk=room_id).values_list('history_floor', flat=True).first() or 0
+    return RoomMemoryState.objects.filter(pk=room_id).values_list(Greatest('history_floor', 'result_history_floor'), flat=True).first() or 0
 
 
 def memory_revision(room_id):
@@ -54,10 +71,13 @@ def state_for_locked_room(room_id):
     return RoomMemoryState.objects.filter(pk=room_id).first() or RoomMemoryState(room_id=room_id)
 
 
-def _fence_history(state):
+def _fence_history(state, *, results_only=False):
     # The room lock also serializes new user messages and character bubbles. Keeping just an
     # ID fences derived character turns and extraction retries without copying deleted text.
     latest = Message.objects.filter(room_id=state.room_id).order_by('-pk').values_list('pk', flat=True).first()
+    if results_only:
+        state.result_history_floor = max(state.result_history_floor, latest or 0)
+        return
     state.history_floor = max(state.history_floor, latest or 0)
     MemoryJob.objects.filter(message__room_id=state.room_id, message_id__lte=state.history_floor).delete()
 
@@ -69,9 +89,30 @@ def set_enabled(state, enabled):
     if not enabled:
         _fence_history(state)
         room_memories(state.room_id).delete()
+        state.results_enabled = False
     state.enabled = enabled
     state.revision += 1
     state.save()
+
+
+def set_results_enabled(state, enabled):
+    if enabled and not state.enabled:
+        raise ValueError('대화 기억을 먼저 켜 주세요.')
+    if state.results_enabled == enabled:
+        return
+    if not enabled:
+        _fence_history(state, results_only=True)
+        room_memories(state.room_id).filter(kind=Memory.Kind.RESULT).delete()
+    state.results_enabled = enabled
+    state.revision += 1
+    state.save()
+
+
+def remember_new_result(message):
+    state = RoomMemoryState.objects.filter(pk=message.room_id, enabled=True, results_enabled=True).first()
+    if state and message.kind == Message.Kind.TEXT and exam_results.record(message, state, room_memories(message.room_id)):
+        state.revision += 1
+        state.save(update_fields=['revision'])
 
 
 def edit_memory(state, memory, changes):
@@ -82,9 +123,9 @@ def edit_memory(state, memory, changes):
         for field, value in changes.items():
             setattr(memory, field, value)
         memory.save(update_fields=changes.keys())
-    _fence_history(state)
+    _fence_history(state, results_only=memory.kind == Memory.Kind.RESULT)
     state.revision += 1
-    state.save(update_fields=['history_floor', 'revision'])
+    state.save(update_fields=['history_floor', 'result_history_floor', 'revision'])
 
 
 @transaction.atomic
@@ -132,7 +173,7 @@ def finish_job(job_id, token, candidates):
     existing = room_memories(room_id)
     for candidate in candidates:
         kind, event_date = candidate['kind'], candidate['event_date']
-        if kind not in Memory.Kind.values:
+        if kind not in (Memory.Kind.PREFERENCE, Memory.Kind.SCHEDULE):
             raise ValueError('기억의 종류가 올바르지 않아요.')
         if event_date is not None and (type(event_date) is not date or kind == Memory.Kind.PREFERENCE):
             raise ValueError('기억의 날짜가 올바르지 않아요.')

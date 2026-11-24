@@ -19,6 +19,10 @@ export default function useChatRoom(room: number, demo: boolean, onArrival: Arri
   const pendingReads = useRef(new Map<number, string>())
   const demoTimers = useRef<number[]>([])
   const demoId = useRef(10)
+  const demoPhotos = useRef<string[]>([])
+  useEffect(() => () => {
+    demoPhotos.current.forEach(url => URL.revokeObjectURL(url))
+  }, [])
 
   const receive = useCallback((batch: Message[], source: 'history' | 'snapshot' | 'delivery' | 'receipt') => {
     const arrivals: number[] = []
@@ -182,18 +186,18 @@ export default function useChatRoom(room: number, demo: boolean, onArrival: Arri
     receive(page.messages, 'history')
   }
 
-  async function send(text: string, quote: Quote | null) {
-    if (!demo) {
-      const message = await sendMessage(room, text, quote)
-      receive([message], 'receipt')
-      onMessage(room, message)
-      return
+  async function send(text: string, quote: Quote | null, key: string, photo?: File) {
+    const sent: Message = demo ? { id: demoId.current++, text, created_at: new Date().toISOString(),
+      sender: 'user', kind: photo ? 'photo' : 'text', status: 'sent', read_at: null, source_post: quote }
+      : await sendMessage(room, text, quote, key, photo)
+    if (demo && photo) {
+      sent.photo = URL.createObjectURL(photo)
+      demoPhotos.current.push(sent.photo)
     }
-    demoTimers.current.forEach(clearTimeout)
-    const sent: Message = { id: demoId.current++, text, created_at: new Date().toISOString(),
-      sender: 'user', kind: 'text', status: 'sent', read_at: null, source_post: quote }
     receive([sent], 'receipt')
     onMessage(room, sent)
+    if (!demo) return
+    demoTimers.current.forEach(clearTimeout)
     setTyping(false)
     demoTimers.current = [
       window.setTimeout(() => {
@@ -203,8 +207,8 @@ export default function useChatRoom(room: number, demo: boolean, onArrival: Arri
       }, 1000),
       window.setTimeout(() => {
         setTyping(false)
-        const reply: Message = { ...sent, id: demoId.current++, sender: 'character', text: '지금 잠깐 쉬는 중 ㅋㅋ',
-          created_at: new Date().toISOString(), source_post: null }
+        const reply: Message = { id: demoId.current++, sender: 'character', kind: 'text', text: '지금 잠깐 쉬는 중 ㅋㅋ',
+          created_at: new Date().toISOString(), source_post: null, read_at: null, status: 'sent' }
         receive([reply], 'delivery')
         onMessage(room, reply)
       }, 2600),

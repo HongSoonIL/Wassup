@@ -146,3 +146,33 @@ world ──✗──▶ chat    (거꾸로는 금지)
 - 시각은 `timezone.now()` 대신 `world.clock.world_now()`를 쓴다. 발표 때 세계 시계를 옮기기 위해서다.
 - `.env`는 커밋하지 않는다. 새 설정값이 생기면 `.env.example`에 같이 적는다.
 - 작업은 `dev` 또는 기능별 브랜치에서 하고 PR로 `main`에 합친다.
+
+## 팀 서버 배포
+
+루트 Dockerfile은 React 정적 자산과 Django ASGI 서버를 한 이미지로 빌드한다. 웹과 네 워커가 PostgreSQL, Redis, 비공개 S3 호환 버킷을 공유한다.
+
+| 서비스 | WASSUP_ROLE | 실행할 일 |
+| --- | --- | --- |
+| web | web | HTTPS, 세션, WebSocket, 정적 자산과 권한 검사 후 사진 응답 |
+| reply | reply | 답장 생성·읽음·입력·말풍선 전달과 먼저 연락하기 |
+| memory | memory | 동의한 방의 기억 추출 |
+| publication | publication | 다음 주 준비와 운영자가 승인한 게시물 발행 |
+| photo | photo | 발행 후보 사진 생성 |
+
+1. 각 서비스에 같은 Dockerfile을 지정한다. 웹에만 공개 도메인과 포트를 연결하고 웹의 배포 전 명령을 `sh deploy/release`, 준비 상태 경로를 `/health/ready/`로 설정한다. 첫 배포에서는 웹의 준비 상태를 확인한 뒤 워커를 올린다. 배포 전 명령은 마이그레이션과 초기 캐릭터·사진 등록을 수행하며 기존 캐릭터 편집은 보존한다.
+2. 모든 서비스에 `DATABASE_URL`, `REDIS_URL`, 같은 `DJANGO_SECRET_KEY`, 사진 버킷 변수와 용도별 모델 설정을 연결한다. Railway 버킷의 BUCKET, ENDPOINT, REGION, ACCESS_KEY_ID, SECRET_ACCESS_KEY를 각각 .env.example의 AWS 변수에 연결한다. 신규 Railway 버킷은 virtual 방식을 쓰고 기존 path 방식 버킷은 `AWS_S3_ADDRESSING_STYLE=path`를 지정한다. Django 관리자에서 올린 캐릭터 프로필 사진은 만료되는 서명 URL로, 개인 사진 및 발행 사진은 권한을 검사하는 앱 경로로 전달한다.
+3. Railway에서 팀 모드가 자동 활성화된다. 다른 호스팅에서는 `WASSUP_TEAM=1`, `DJANGO_ALLOWED_HOSTS`를 지정하고 HTTPS 프록시가 X-Forwarded-Proto를 직접 설정하도록 구성한다. 팀 모드는 보안 쿠키, 실시간 한국 시각과 초대 가입을 사용한다.
+4. 웹 컨테이너에서 `python manage.py create_invite`로 가입자별 초대 코드를 발급한다. 가입 화면에서 한 번 쓸 수 있고 7일 후 만료된다. 발행 담당자에게는 Django의 `world.publish_week` 권한을 부여한다. 담당자는 `/studio/`에서 후보 문구·사진·일정을 확인하고 승인한다.
+5. 재배포 후 웹 준비 상태와 네 워커의 실행 상태를 확인한다. 이전 계정으로 로그인해 기존 사진, 답장 기록과 예약을 확인한다. 코드 롤백 시에는 기존 DB 및 버킷을 유지하고 해당 릴리스와 스키마가 호환되는지 확인한다.
+
+같은 커밋을 수동으로 다시 배포할 때는 Railway CLI v5에서 저장소 루트를 `railway link`로 대상 프로젝트에 연결한다. 아래 명령은 현재 커밋에 기록된 파일만 임시 폴더에 풀어 웹에 배포한다.
+
+```sh
+revision=$(git rev-parse HEAD)
+release_dir=$(mktemp -d)
+git archive "$revision" | tar -x -C "$release_dir"
+railway up "$release_dir" --path-as-root --environment production --service web --detach --message "$revision"
+railway service status --environment production --service web
+```
+
+해당 웹 배포가 `SUCCESS`이고 `/health/ready/`가 200을 반환하면 같은 폴더를 사용해 `--service`를 각각 `reply`, `memory`, `publication`, `photo`로 바꿔 배포한다. 각 서비스의 배포 기록에서 같은 커밋 번호를 확인할 수 있다.

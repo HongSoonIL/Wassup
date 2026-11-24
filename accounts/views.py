@@ -1,4 +1,5 @@
 import json
+from hashlib import sha256
 from urllib.parse import urlsplit
 
 from django.contrib.auth import login
@@ -10,6 +11,7 @@ from django.http import HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
+from django.utils import timezone
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.debug import sensitive_post_parameters
@@ -18,7 +20,7 @@ from django.views.decorators.http import require_GET, require_http_methods
 from chat.views import error, json_response, login_required_json
 
 from .forms import ProfileForm, SignupForm
-from .models import User, validate_shared_preferences
+from .models import SignupInvite, User, validate_shared_preferences
 
 
 def safe_next(request):
@@ -43,7 +45,7 @@ def entry(request):
     return redirect('feed')
 
 
-@sensitive_post_parameters('password1', 'password2', 'birth_date')
+@sensitive_post_parameters('password1', 'password2', 'birth_date', 'invite_code')
 @never_cache
 @require_http_methods(['GET', 'POST'])
 def signup(request):
@@ -55,6 +57,15 @@ def signup(request):
     if form.is_valid():
         try:
             with transaction.atomic():
+                if 'invite_code' in form.fields:
+                    digest = sha256(form.cleaned_data['invite_code'].encode()).hexdigest()
+                    now = timezone.now()
+                    redeemed = SignupInvite.objects.filter(
+                        digest=digest, redeemed_at__isnull=True, expires_at__gt=now,
+                    ).update(redeemed_at=now)
+                    if not redeemed:
+                        form.add_error('invite_code', '사용할 수 없는 초대 코드예요.')
+                        return render(request, 'accounts/signup.html', {'form': form, 'next': target})
                 user = form.save()
         except IntegrityError:
             if not User.objects.filter(username=form.cleaned_data['username']).exists():
@@ -128,15 +139,28 @@ def my_profile(request):
     form = ProfileForm(instance=user)
     if request.method == 'POST':
         section = 'edit'
-        form = ProfileForm(request.POST, instance=user)
-        if form.is_valid():
-            form.save(commit=False).save(update_fields=ProfileForm.Meta.fields)
-            return redirect('my-profile')
+        with transaction.atomic():
+            user = User.objects.select_for_update().get(pk=user.pk)
+            fields = ('birthday_month', 'birthday_day', 'birthday_shared')
+            data = request.POST.copy()
+            before = tuple(getattr(user, key) for key in fields)
+            if not any(key in data for key in fields):
+                # Older profile forms submit only nickname and bio.
+                data.update(dict(zip(fields, before)))
+            form = ProfileForm(data, instance=user)
+            if form.is_valid():
+                if before != tuple(form.cleaned_data[key] for key in fields):
+                    user.preference_revision += 1
+                user.save(update_fields=(*ProfileForm.Meta.fields, 'preference_revision'))
+                return redirect('my-profile')
     profile = {
         'section': section if section in ('edit', 'settings', 'preferences', 'memories') else 'overview',
         'username': user.username,
         'nickname': form['nickname'].value() or '',
         'bio': form['bio'].value() or '',
+        'birthday_month': form['birthday_month'].value(),
+        'birthday_day': form['birthday_day'].value(),
+        'birthday_shared': bool(form['birthday_shared'].value()),
         'errors': {field: list(errors) for field, errors in form.errors.items()},
         'preferences': _preference_snapshot(user),
     }

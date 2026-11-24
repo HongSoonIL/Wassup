@@ -137,11 +137,11 @@ class FriendDeletionRaceTests(TransactionTestCase):
         passed_ownership = Event()
         resume = Event()
 
-        def pause_before_acceptance(*args):
+        def pause_before_acceptance(*args, **kwargs):
             passed_ownership.set()
             if not resume.wait(5):
                 raise TimeoutError('Timed out waiting for deletion')
-            return accept_message(*args)
+            return accept_message(*args, **kwargs)
 
         def send():
             try:

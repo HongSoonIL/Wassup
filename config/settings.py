@@ -13,6 +13,8 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 import os
 from pathlib import Path
 
+import dj_database_url
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -32,6 +34,19 @@ SECRET_KEY = os.environ['DJANGO_SECRET_KEY']  # .env에 없으면 바로 에러�
 DEBUG = os.environ.get('DJANGO_DEBUG', 'False') == 'True'
 
 ALLOWED_HOSTS = [h for h in os.environ.get('DJANGO_ALLOWED_HOSTS', '').split(',') if h]
+TEAM_DEPLOYMENT = bool(os.environ.get('RAILWAY_ENVIRONMENT_ID')) or os.environ.get('WASSUP_TEAM') == '1'
+INVITE_ONLY = TEAM_DEPLOYMENT or os.environ.get('WASSUP_INVITE_ONLY') == '1'
+if TEAM_DEPLOYMENT:
+    if DEBUG:
+        raise ImproperlyConfigured('Disable DJANGO_DEBUG for the team deployment.')
+    ALLOWED_HOSTS.append('healthcheck.railway.app')
+    if domain := os.environ.get('RAILWAY_PUBLIC_DOMAIN'):
+        ALLOWED_HOSTS.append(domain)
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_SSL_REDIRECT = True
+    SECURE_REDIRECT_EXEMPT = [r'^health/ready/$']
+    SESSION_COOKIE_SECURE = CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = 86400
 
 
 # Application definition
@@ -59,6 +74,7 @@ LOGIN_URL = '/login/'
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -92,20 +108,26 @@ ASGI_APPLICATION = 'config.asgi.application'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 # PostgreSQL — docker compose up -d 로 띄운다 (docker-compose.yml)
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.environ.get('POSTGRES_DB', 'wassup'),
-        'USER': os.environ.get('POSTGRES_USER', 'wassup'),
-        'PASSWORD': os.environ['POSTGRES_PASSWORD'],
-        'HOST': os.environ.get('POSTGRES_HOST', '127.0.0.1'),
-        'PORT': os.environ.get('POSTGRES_PORT', '5432'),
+if os.environ.get('DATABASE_URL'):
+    DATABASES = {'default': dj_database_url.config()}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.environ.get('POSTGRES_DB', 'wassup'),
+            'USER': os.environ.get('POSTGRES_USER', 'wassup'),
+            'PASSWORD': os.environ['POSTGRES_PASSWORD'],
+            'HOST': os.environ.get('POSTGRES_HOST', '127.0.0.1'),
+            'PORT': os.environ.get('POSTGRES_PORT', '5432'),
+        }
     }
-}
+
 
 # Redis — Celery와 Channels 설정(2주차)에서 쓴다
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://127.0.0.1:6379/0')
 WASSUP_REPLY_DEMO_SECONDS = int(os.environ.get('WASSUP_REPLY_DEMO_SECONDS', '0'))
+if TEAM_DEPLOYMENT and WASSUP_REPLY_DEMO_SECONDS:
+    raise ImproperlyConfigured('Remove the demo reply delay for the team deployment.')
 CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels_redis.core.RedisChannelLayer',
@@ -157,6 +179,7 @@ STATICFILES_DIRS = [('assets', FRONTEND_ASSETS)] if FRONTEND_ASSETS.is_dir() els
 # 업로드 파일 (캐릭터 프사, 배경, 사진). /media/는 .gitignore에 있다
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+PRIVATE_PHOTO_ROOT = BASE_DIR / os.environ.get('PRIVATE_PHOTO_DIR', 'private-media/user-photos')
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -166,11 +189,33 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 STORAGES = {
     'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
     'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'},
+    'user_photos': {
+        'BACKEND': 'accounts.private_photos.PrivatePhotoStorage',
+        'OPTIONS': {'file_permissions_mode': 0o600, 'directory_permissions_mode': 0o700},
+    },
     'post_photos': {
         'BACKEND': 'django.core.files.storage.FileSystemStorage',
         'OPTIONS': {'location': BASE_DIR / os.environ.get('POST_PHOTO_DIR', 'private-media')},
     },
 }
+
+if TEAM_DEPLOYMENT or os.environ.get('AWS_STORAGE_BUCKET_NAME'):
+    options = {
+        'bucket_name': os.environ['AWS_STORAGE_BUCKET_NAME'],
+        'endpoint_url': os.environ['AWS_S3_ENDPOINT_URL'],
+        'access_key': os.environ['AWS_ACCESS_KEY_ID'],
+        'secret_key': os.environ['AWS_SECRET_ACCESS_KEY'],
+        'region_name': os.environ.get('AWS_S3_REGION_NAME', 'auto'),
+        'signature_version': 's3v4',
+        'addressing_style': os.environ.get('AWS_S3_ADDRESSING_STYLE', 'virtual'),
+        'file_overwrite': False,
+        'max_memory_size': 1024 * 1024,
+    }
+    for alias, prefix in [('default', 'characters'), ('post_photos', 'publication'), ('user_photos', 'users')]:
+        STORAGES[alias] = {
+            'BACKEND': 'storages.backends.s3.S3Storage' if alias == 'default' else 'accounts.private_photos.PrivateBucket',
+            'OPTIONS': {**options, 'location': prefix},
+        }
 
 LLM_BACKEND = os.environ.get('LLM_BACKEND', 'fake')
 LLM_MODEL = os.environ.get('LLM_MODEL', '')

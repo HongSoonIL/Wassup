@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase, override_settings
 
-from llm.proactive import FollowupError, generate_followup
+from llm.proactive import FollowupError, generate_followup, generate_post_reaction
 from llm.proactive_fixture import CASES
 
 
@@ -45,6 +45,25 @@ class FakeFollowupTests(SimpleTestCase):
 @override_settings(LLM_BACKEND='openai', LLM_MODEL='shared', LLM_CHAT_MODEL='chat-model',
                    LLM_CHAT_EFFORT='low', LLM_API_KEY='test-key')
 class OpenAIFollowupTests(SimpleTestCase):
+    @patch('llm.proactive.urlopen')
+    def test_personal_reaction_choice_is_grounded_and_bound_to_eligible_room_ids(self, request):
+        post = {'caption': '주말 카페', 'photo_description': '파란 잔에 커피가 담겨 있다'}
+        friends = [{'room_id': 5, 'name': '도현', 'personality': '커피 좋아함', 'voice': '단답',
+                    'major': '경영학과', 'status_message': '카페 가고 싶다'}]
+        def response(room_id, message):
+            return _response(content=[{'type': 'output_text', 'text': json.dumps({'room_id': room_id, 'message': message})}])
+
+        request.side_effect = [response(5, '저 커피 어땠음?'), response(99, '누구야?'), response(True, '안녕'),
+                               response(None, None), response(5, '**누구야?**')]
+        result = generate_post_reaction({**post, 'path': 'private'}, [{**friends[0], 'room_history': 'private'}])
+        self.assertEqual(result, (5, '저 커피 어땠음?'))
+        wire = json.loads(request.call_args.args[0].data)
+        self.assertEqual(json.loads(wire['input']), {'post': post, 'friends': friends})
+        self.assertFalse(wire['store'])
+        self.assertEqual(wire['text']['format']['schema']['properties']['room_id']['enum'], [5, None])
+        for _ in range(4):
+            self.assertIsNone(generate_post_reaction(post, friends))
+
     @patch('llm.proactive.urlopen')
     def test_transport_uses_chat_options_and_only_followup_fields(self, request):
         request.return_value = _response('통계 시험 어땠어?')

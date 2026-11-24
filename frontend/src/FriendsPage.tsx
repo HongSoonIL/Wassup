@@ -12,13 +12,11 @@ import ProfileBody from './ProfileBody'
 import { UserNav, useFriendsOverview } from './UserNav'
 import type { OverviewFriend } from './UserNav'
 import { usePageData } from './usePageData'
+import { getFeed, postKey } from './posts'
 import './people.css'
 
 type Person = Friend['character'] & { room_id: number | null }
 export const discover = () => request<{ characters: Person[] }>('/api/characters/')
-export type FeedPost = Profile['posts'][number] & { name: string; character_id: number }
-export type FeedPage = { posts: FeedPost[]; next_cursor: string | null }
-export const getFeed = (cursor?: string) => request<FeedPage>('/api/feed/' + (cursor ? '?cursor=' + encodeURIComponent(cursor) : ''))
 const date = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: 'short', day: 'numeric' })
 const day = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', year: 'numeric', month: 'numeric', day: 'numeric' })
 const clock = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
@@ -94,11 +92,11 @@ function RecentPost() {
   return <section className="home-latest" aria-label="최근 소식">
     <div className="home-section-title"><SectionTitle>최근 소식</SectionTitle><a href="/feed/">피드 전체 보기 <ArrowRight size={15}/></a></div>
     <PageNotice {...result}/>
-    {data && (post ? <a className="home-latest-card" href={`/feed/#post-${post.id}`}>
-      <img src={post.photo.url} alt={post.photo.alt}/>
-      <div><span className="home-latest-by"><b>{post.name}</b><time dateTime={post.published_at}>{date.format(new Date(post.published_at))} · {clock.format(new Date(post.published_at))}</time>
-        {post.photo.ai_generated && <small>AI 생성 사진</small>}</span>
-        <p>{post.caption}</p></div>
+    {data && (post ? <a className="home-latest-card" href={`/feed/#${postKey(post)}`}>
+      {post.photo && <img src={post.photo.url} alt={post.photo.alt}/>}
+      <div><span className="home-latest-by"><b>{post.kind === 'personal' ? '나' : post.name}</b><time dateTime={post.published_at}>{date.format(new Date(post.published_at))} · {clock.format(new Date(post.published_at))}</time>
+        {post.photo?.ai_generated && <small>AI 생성 사진</small>}</span>
+        {post.caption && <p>{post.caption}</p>}</div>
     </a> : <p className="people-empty">아직 올라온 소식이 없어요.</p>)}
   </section>
 }

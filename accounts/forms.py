@@ -1,6 +1,8 @@
+from datetime import date
 from zoneinfo import ZoneInfo
 
 from django import forms
+from django.conf import settings
 from django.contrib.auth.forms import UserCreationForm
 from django.utils import timezone
 
@@ -10,7 +12,19 @@ from .models import User
 class ProfileForm(forms.ModelForm):
     class Meta:
         model = User
-        fields = ('nickname', 'bio')
+        fields = ('nickname', 'bio', 'birthday_month', 'birthday_day', 'birthday_shared')
+
+    def clean(self):
+        data = super().clean()
+        month, day = data.get('birthday_month'), data.get('birthday_day')
+        if month is None and day is None:
+            data['birthday_shared'] = False
+        else:
+            try:
+                date(2000, month, day)
+            except (TypeError, ValueError):
+                self.add_error('birthday_day', '달력에 있는 월과 일을 선택해 주세요.')
+        return data
 
     def clean_bio(self):
         value = self.cleaned_data['bio']
@@ -26,6 +40,13 @@ class AgreementCheckbox(forms.CheckboxInput):
 
 
 class SignupForm(UserCreationForm):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if settings.INVITE_ONLY:
+            self.fields['invite_code'] = forms.CharField(
+                label='초대 코드', max_length=64, widget=forms.PasswordInput(attrs={'autocomplete': 'off'}),
+            )
+
     birth_date = forms.DateField(
         label='생년월일',
         input_formats=['%Y-%m-%d'],

@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+case "${WASSUP_ROLE:-web}" in
+    web) exec daphne -b 0.0.0.0 -p "${PORT:-8000}" config.asgi:application ;;
+    reply|memory|publication|photo) exec python manage.py "run_${WASSUP_ROLE}_worker" ;;
+    *) echo 'Unknown WASSUP_ROLE' >&2; exit 2 ;;
+esac

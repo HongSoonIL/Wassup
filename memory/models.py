@@ -7,7 +7,9 @@ class RoomMemoryState(models.Model):
     room = models.OneToOneField('chat.Friendship', primary_key=True, on_delete=models.CASCADE,
                                 related_name='memory_state')
     enabled = models.BooleanField(default=False)
+    results_enabled = models.BooleanField(default=False)
     revision = models.PositiveBigIntegerField(default=0)
+    result_history_floor = models.PositiveBigIntegerField(default=0)
     history_floor = models.PositiveBigIntegerField(default=0)
 
 
@@ -15,11 +17,15 @@ class Memory(models.Model):
     class Kind(models.TextChoices):
         SCHEDULE = 'schedule', '일정'
         PREFERENCE = 'preference', '취향'
+        RESULT = 'result', '시험 결과'
 
     # The source determines the room, so a fact cannot be assigned to a different friendship.
     source = models.ForeignKey('chat.Message', on_delete=models.CASCADE, related_name='memories')
     kind = models.CharField(max_length=10, choices=Kind.choices)
     text = models.CharField(max_length=1000)
+    score = models.PositiveSmallIntegerField(null=True, blank=True)
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    pinned = models.BooleanField(default=False)
     event_date = models.DateField(null=True, blank=True)
 
 

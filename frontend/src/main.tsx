@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { createRoot } from 'react-dom/client'
 import { ArrowDown, ArrowUp, ChevronLeft, ImageOff, Info, X } from 'lucide-react'
 import { getProfile, markRead, messagePhoto, RequestError } from './chat'
+import { useDraftRequest } from './useDraftRequest'
 import type { Message, Profile, Quote } from './chat'
 import useChatRoom from './useChatRoom'
 import Publication from './Publication'
@@ -13,6 +14,7 @@ import FriendsPage from './FriendsPage'
 import { InboxList, InboxPlaceholder, useInbox } from './Inbox'
 import ProfileBody from './ProfileBody'
 import { FriendIdentity, PhotoViewerProvider, PostPhoto } from './SocialMedia'
+import { PhotoPicker, PhotoPreview, usePhotoDraft } from './PhotoDraft'
 import UserNav from './UserNav'
 import './style.css'
 
@@ -26,24 +28,26 @@ const atBottom = (el: HTMLElement) => el.scrollHeight - el.clientHeight - el.scr
 const overlayOpen = () => Boolean(history.state?.chatProfile || history.state?.wsPhoto)
 
 function quotePhotoKey(messageId: number, quote: Extract<Quote, { status: 'available' }>) {
-  return `quote:${messageId}:${quote.id}:${quote.version}`
+  const scope = quote.kind === 'personal' ? 'personal-quote' : 'quote'
+  return `${scope}:${messageId}:${quote.id}:${quote.version}`
 }
 
 function QuotePreview({ quote, name, messageId }: { quote: Quote; name: string; messageId?: number }) {
+  const title = quote.kind === 'personal' ? '내 게시물' : quote.status === 'available' ? name + '의 게시물' : '인용한 게시물'
   return <div className="chat-quote">
-    {quote.status === 'available'
-      ? <PostPhoto src={quote.photo_url} alt={quote.photo_alt} className="quote-thumbnail" label={name + '의 인용 사진 확대'}
-          viewerKey={messageId === undefined ? undefined : quotePhotoKey(messageId, quote)}/>
-      : <span className="quote-unavailable" aria-hidden="true"><ImageOff size={19}/></span>}
-    <span className="quote-copy"><strong>{name}의 게시물</strong>
-      <span>{quote.status === 'available' ? quote.caption : '공개가 종료된 게시물이에요.'}</span>
+    {quote.status === 'available' && quote.photo_url &&
+      <PostPhoto src={quote.photo_url} alt={quote.photo_alt} className="quote-thumbnail" label={title + ' 사진 확대'}
+        viewerKey={messageId === undefined ? undefined : quotePhotoKey(messageId, quote)}/>}
+    {quote.status === 'unavailable' && <span className="quote-unavailable" aria-hidden="true"><ImageOff size={19}/></span>}
+    <span className="quote-copy"><strong>{title}</strong>
+      <span>{quote.status === 'available' ? quote.caption || '사진' : '이 게시물을 볼 수 없어요.'}</span>
     </span>
   </div>
 }
 
 function updateQuoteUrl(quote: Quote | null) {
   const url = new URL(location.href)
-  if (quote?.status === 'available') url.searchParams.set('source_post', String(quote.id))
+  if (quote?.status === 'available' && quote.kind !== 'personal') url.searchParams.set('source_post', String(quote.id))
   else url.searchParams.delete('source_post')
   history.replaceState(history.state, '', url)
 }
@@ -51,6 +55,7 @@ function updateQuoteUrl(quote: Quote | null) {
 function Chat({ room, inbox }: { room: number; inbox: ReturnType<typeof useInbox> }) {
   const [quote, setQuote] = useState<Quote | null>(() => JSON.parse(document.getElementById('initial-quote')?.textContent || 'null'))
   const [draft, setDraft] = useState('')
+  const photoDraft = usePhotoDraft()
   const [busy, setBusy] = useState(false)
   const [sendError, setSendError] = useState('')
   const [paging, setPaging] = useState(false)
@@ -73,6 +78,7 @@ function Chat({ room, inbox }: { room: number; inbox: ReturnType<typeof useInbox
   const [readThrough, setReadThrough] = useState(0)
   const reading = useRef(false)
   const lock = useRef(false)
+  const draftRequest = useDraftRequest(draft, photoDraft.selection?.file, quote)
   const pagingLock = useRef(false)
   const quoteRevision = useRef(0)
   const albumQuote = useRef<Quote | null>(null)
@@ -98,7 +104,7 @@ function Chat({ room, inbox }: { room: number; inbox: ReturnType<typeof useInbox
     const photo = messagePhoto(message)
     if (photo?.viewerKey === key) return photo
     const quoted = message.source_post
-    if (quoted?.status === 'available' && quotePhotoKey(message.id, quoted) === key) {
+    if (quoted?.status === 'available' && quoted.photo_url && quotePhotoKey(message.id, quoted) === key) {
       return { src: quoted.photo_url, alt: quoted.photo_alt }
     }
   }
@@ -193,14 +199,17 @@ function Chat({ room, inbox }: { room: number; inbox: ReturnType<typeof useInbox
 
   async function submit() {
     const text = draft.trim()
-    if (!text || lock.current || !ready || listOpen || quote?.status === 'unavailable') return
+    const photo = photoDraft.selection?.file
+    if ((!text && !photo) || photoDraft.error || lock.current || !ready || listOpen || quote?.status === 'unavailable') return
     lock.current = true
     setBusy(true)
     setSendError('')
     const revision = quoteRevision.current
     try {
-      await send(text, quote)
+      await send(text, quote, draftRequest.key(), photo)
+      draftRequest.complete()
       if (revision === quoteRevision.current && quote) clearQuote()
+      photoDraft.clear()
       setDraft(value => value === draft ? '' : value)
     } catch (error) {
       if (revision === quoteRevision.current && quote && error instanceof RequestError && error.status === 404) {
@@ -347,13 +356,16 @@ function Chat({ room, inbox }: { room: number; inbox: ReturnType<typeof useInbox
             clearQuote()
             composerInput.current?.focus({ preventScroll: true })
           }}><X size={18}/></button></div>}
+        <PhotoPreview draft={photoDraft} busy={busy}
+          note={demo ? '미리보기에서는 사진을 이 화면에서만 볼 수 있어요.' : '답장을 위해 이 사진을 AI 모델에 보낼 수 있어요.'}/>
         {sendError && <p role="alert" className="notice">{sendError}</p>}
         <form className="composer" onSubmit={e => { e.preventDefault(); void submit() }}>
-          <textarea ref={composerInput} aria-label="메시지" rows={1} maxLength={1000} placeholder="메시지 보내기" value={draft}
-            onChange={e => setDraft(e.target.value)} onKeyDown={e => {
+          <PhotoPicker draft={photoDraft} disabled={busy || !ready} compact onSelect={() => setSendError('')}/>
+          <textarea ref={composerInput} aria-label="메시지" rows={1} maxLength={1000} placeholder={photoDraft.selection ? '사진에 덧붙일 말 (선택)' : '메시지 보내기'} value={draft}
+            onChange={e => { setDraft(e.target.value); setSendError('') }} onKeyDown={e => {
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) { e.preventDefault(); void submit() }
             }}/>
-          <button className="send" aria-label="전송" disabled={!draft.trim() || busy || !ready || quote?.status === 'unavailable'}><ArrowUp size={22}/></button>
+          <button className="send" aria-label={sendError ? '다시 전송' : '전송'} disabled={(!draft.trim() && !photoDraft.selection) || !!photoDraft.error || busy || !ready || quote?.status === 'unavailable'}><ArrowUp size={22}/></button>
         </form>
       </footer>
     </section>

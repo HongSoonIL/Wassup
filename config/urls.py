@@ -20,8 +20,10 @@ from django.contrib import admin
 from django.urls import include, path
 
 from chat.views import chat_page, from_post
+from config.health import ready
 
 urlpatterns = [
+    path("health/ready/", ready),
     path('', include('accounts.urls')),
     path('', include('dashboard.urls')),
     path('admin/', admin.site.urls),
