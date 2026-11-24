@@ -1,0 +1,133 @@
+{
+  "date": "2026-11-26",
+  "timezone": "Asia/Seoul",
+  "previewAt": "2026-11-26T20:10:00+09:00",
+  "conversationAccountId": "account-a",
+  "characters": [
+    {
+      "id": "dohyun",
+      "name": "도현",
+      "summary": "23세, 경영학과 3학년. 수업이 끝나면 학교 앞 카페에서 일한다.",
+      "avatarAsset": "dohyun",
+      "schedule": [
+        {"start": "2026-11-26T00:00:00+09:00", "end": "2026-11-26T09:30:00+09:00", "label": "자는 중"},
+        {"start": "2026-11-26T09:30:00+09:00", "end": "2026-11-26T10:30:00+09:00", "label": "등교 중"},
+        {"start": "2026-11-26T10:30:00+09:00", "end": "2026-11-26T12:00:00+09:00", "label": "수업 중"},
+        {"start": "2026-11-26T12:00:00+09:00", "end": "2026-11-26T13:00:00+09:00", "label": "학식 먹는 중"},
+        {"start": "2026-11-26T13:00:00+09:00", "end": "2026-11-26T15:00:00+09:00", "label": "공강"},
+        {"start": "2026-11-26T15:00:00+09:00", "end": "2026-11-26T16:30:00+09:00", "label": "수업 중"},
+        {"start": "2026-11-26T16:30:00+09:00", "end": "2026-11-26T17:30:00+09:00", "label": "조별과제 회의 중"},
+        {"start": "2026-11-26T17:30:00+09:00", "end": "2026-11-26T17:55:00+09:00", "label": "알바 가는 길"},
+        {"start": "2026-11-26T17:55:00+09:00", "end": "2026-11-26T18:00:00+09:00", "label": "카페 도착"},
+        {"start": "2026-11-26T18:00:00+09:00", "end": "2026-11-26T22:00:00+09:00", "label": "카페 알바 중"},
+        {"start": "2026-11-26T22:00:00+09:00", "end": "2026-11-26T22:30:00+09:00", "label": "퇴근길"},
+        {"start": "2026-11-26T22:30:00+09:00", "end": "2026-11-27T00:00:00+09:00", "label": "집에서 쉬는 중"}
+      ],
+      "replyWindow": {
+        "firstMessageAt": "2026-11-26T18:40:00+09:00",
+        "breakAt": "2026-11-26T20:10:00+09:00",
+        "deadlineAt": "2026-11-26T21:40:00+09:00"
+      },
+      "diary": [
+        {"sourcePostId": "dohyun-window", "text": "점심에 찍은 카페 창가 사진을 출근 직전에 올렸다. 오늘은 여섯 시부터 열 시까지 근무다."},
+        {"sourcePostId": "dohyun-closing", "text": "열 시에 마감했다. 마지막으로 우유 피처 두 개를 닦아서 뒤집어 뒀다."}
+      ],
+      "posts": [
+        {
+          "id": "dohyun-window",
+          "publishAt": "2026-11-26T17:55:00+09:00",
+          "state": "published",
+          "caption": "점심에 찍어 둔 창가. 출근 5분 전인데 벌써 저기 앉고 싶음 ㅋㅋ",
+          "photoId": "cafe-interior",
+          "photoAlt": "햇빛이 비치는 카페 창가의 빈 바 테이블과 아이스커피 한 잔"
+        },
+        {
+          "id": "dohyun-closing",
+          "publishAt": "2026-11-26T22:05:00+09:00",
+          "state": "scheduled",
+          "caption": "피처 두 개까지 닦음. 오늘 영업 끝",
+          "photoId": "cafe-close",
+          "photoAlt": "마감 뒤 뒤집어 말리는 우유 피처 두 개와 닦아 놓은 카페 작업대"
+        }
+      ],
+      "conversation": [
+        {"id": "a-d-1", "at": "2026-11-26T18:40:00+09:00", "sender": "user", "text": "도현아 오늘도 카페야? 나 내일 통계 시험인데 하나도 모르겠어."},
+        {"id": "a-d-2", "at": "2026-11-26T20:10:00+09:00", "sender": "character", "text": "ㅇㅇ 잠깐 비었음. 통계면 일단 기출 한 문제만 같이 보자"},
+        {"id": "a-d-3", "at": "2026-11-26T20:12:00+09:00", "sender": "user", "text": "창가 사진 봤어. 퇴근은 몇 시야?", "sourcePostId": "dohyun-window"},
+        {"id": "a-d-4", "at": "2026-11-26T20:13:00+09:00", "sender": "character", "text": "열 시. 너도 밥은 먹고 해 ㅋㅋ"}
+      ]
+    },
+    {
+      "id": "seoyun",
+      "name": "서윤",
+      "summary": "22세, 시각디자인과 3학년. 오후에는 작업실에 있고 집에 가면 고양이 두부를 찾는다.",
+      "avatarAsset": "seoyun",
+      "schedule": [
+        {"start": "2026-11-26T00:00:00+09:00", "end": "2026-11-26T08:00:00+09:00", "label": "자는 중"},
+        {"start": "2026-11-26T08:00:00+09:00", "end": "2026-11-26T09:30:00+09:00", "label": "등교 준비와 통학"},
+        {"start": "2026-11-26T09:30:00+09:00", "end": "2026-11-26T12:30:00+09:00", "label": "실기 수업 중"},
+        {"start": "2026-11-26T12:30:00+09:00", "end": "2026-11-26T14:00:00+09:00", "label": "점심시간"},
+        {"start": "2026-11-26T14:00:00+09:00", "end": "2026-11-26T18:00:00+09:00", "label": "작업실에서 시안 보는 중"},
+        {"start": "2026-11-26T18:00:00+09:00", "end": "2026-11-26T19:30:00+09:00", "label": "집에 가는 길"},
+        {"start": "2026-11-26T19:30:00+09:00", "end": "2026-11-26T20:00:00+09:00", "label": "두부랑 쉬는 중"},
+        {"start": "2026-11-26T20:00:00+09:00", "end": "2026-11-27T00:00:00+09:00", "label": "집에서 과제 중"}
+      ],
+      "diary": [
+        {"sourcePostId": "seoyun-poster", "text": "작업실에서 포스터를 군청색과 주황색으로 한 장씩 뽑아 봤다. 종이에서는 주황색이 예뻤다."},
+        {"sourcePostId": "seoyun-dubu", "text": "집에 오니 두부가 내 겨자색 담요에 자리 잡고 있었다. 발이 시려도 담요를 양보했다."}
+      ],
+      "posts": [
+        {
+          "id": "seoyun-poster",
+          "publishAt": "2026-11-26T16:30:00+09:00",
+          "state": "published",
+          "caption": "군청이냐 주황이냐… 화면에선 군청이었는데 뽑아 보니까 주황도 예쁘잖아 ㅠㅠ",
+          "photoId": "studio-print",
+          "photoAlt": "작업실 책상 위에 펼쳐진 군청색과 주황색 두 가지 포스터 시안"
+        },
+        {
+          "id": "seoyun-dubu",
+          "publishAt": "2026-11-26T19:50:00+09:00",
+          "state": "published",
+          "caption": "두부야 그거 내 담요인데… 네가 그러고 있으면 내가 양보해야지 뭐",
+          "photoId": "dubu-home",
+          "photoAlt": "집 소파의 겨자색 담요 위에 앞발을 포개고 누운 흰 고양이 두부"
+        }
+      ],
+      "conversation": [
+        {"id": "a-s-1", "at": "2026-11-26T19:54:00+09:00", "sender": "user", "text": "난 아까 그 주황색 시안에 한 표!", "sourcePostId": "seoyun-poster"},
+        {"id": "a-s-2", "at": "2026-11-26T19:55:00+09:00", "sender": "character", "text": "헐 너도?? 종이에 뽑으니까 주황색이 갑자기 살아나더라"},
+        {"id": "a-s-3", "at": "2026-11-26T19:56:00+09:00", "sender": "character", "text": "지금은 두부가 담요 다 차지해서 나 혼자 발 시려 ㅠㅠ", "sourcePostId": "seoyun-dubu"}
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "id": "account-a",
+      "relationship": {
+        "characterId": "dohyun",
+        "memoryConsent": true,
+        "proactiveConsent": false,
+        "memories": [
+          {"id": "a-d-exam", "sourceMessageId": "a-d-1", "fact": "11월 27일 통계 시험을 본다."}
+        ]
+      }
+    },
+    {
+      "id": "account-b",
+      "relationship": {
+        "characterId": "dohyun",
+        "memoryConsent": false,
+        "proactiveConsent": false,
+        "memories": []
+      }
+    }
+  ],
+  "publicationExample": {
+    "postId": "dohyun-closing",
+    "previousPublishedVersion": 3,
+    "candidateVersion": 4,
+    "onSuccess": {"at": "2026-11-26T22:05:00+09:00", "state": "published"},
+    "onFailure": {"state": "failed", "visibleVersion": 3}
+  }
+}

@@ -66,6 +66,10 @@ await fetch(`/api/rooms/${roomId}/messages/`, {
 2. admin의 **친구 관계(채팅방)** 에서 내 계정과 도현을 친구로 추가한다.
 3. 같은 브라우저에서 `/api/friends/`와 `/api/rooms/{id}/messages/`를 연다.
 
+## 첫 베타 화면 시안
+
+`frontend`에서 `pnpm install --frozen-lockfile`과 `pnpm dev`를 실행하고 `/design.html`을 연다. 친구 홈·프로필·피드·채팅과 운영 스튜디오가 도현·서윤의 같은 하루를 사용한다. 새로고침하면 샘플이 초기화된다. 검토 시각, 계정 전환과 예약 발행 재현 방법은 [첫 베타 제품 설계](docs/design/first-beta.md)에 있다.
+
 ## 앱 구성 (설계서 3.2절)
 
 | 앱 | 하는 일 | 1단계 모델 |
