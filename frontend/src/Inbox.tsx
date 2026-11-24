@@ -1,3 +1,4 @@
+import { EmptyState, SectionTitle } from './PageParts'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { ArrowRight, MessageCircle } from 'lucide-react'
@@ -93,12 +94,10 @@ export function InboxList({ friends, error, retry, room, demo = false, onDemoSel
   const today = day.format(new Date())
   return <aside className="side" aria-label="대화 목록">
     {demo && <span className="brand" aria-label="wassup">wassup<span className="brand-dot">.</span></span>}
-    <div className="side-heading">{room === undefined ? <h1>메시지</h1> : <h2>대화</h2>}</div>
+    {room !== undefined && <div className="side-heading"><SectionTitle>대화</SectionTitle></div>}
     {error && <p className="inbox-notice" role="status">{error} <button onClick={retry}>다시 시도</button></p>}
     {friends === null && !error && <p className="inbox-notice" role="status">대화 목록을 불러오는 중…</p>}
-    {friends?.length === 0 && <div className="inbox-empty">
-      <p>아직 대화할 친구가 없어요.</p><a href="/discover/">친구 찾기 <ArrowRight size={16} aria-hidden="true"/></a>
-    </div>}
+    {friends?.length === 0 && <EmptyState action={<a className="people-secondary" href="/discover/">첫 친구 만나기 <ArrowRight size={16}/></a>}>아직 대화할 친구가 없어요.</EmptyState>}
     {Boolean(friends?.length) && <nav aria-label="채팅방">{friends?.map(friend => {
       const selected = room === friend.room_id
       const last = friend.last_message

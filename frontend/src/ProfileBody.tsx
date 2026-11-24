@@ -1,3 +1,4 @@
+import { ReplyToPost, SectionTitle } from './PageParts'
 import { useRef, useState } from 'react'
 import type { MouseEvent, ReactNode } from 'react'
 import { ArrowUpRight, ChevronDown, Images, MessageCircle } from 'lucide-react'
@@ -47,7 +48,7 @@ function Album({ profile, onQuote }: Pick<ProfileProps, 'profile' | 'onQuote'>) 
   }
 
   return <section className="profile-records" aria-label="일상 기록">
-    <div className="profile-section-title"><Images size={20} aria-hidden="true"/><h2>일상 기록</h2></div>
+    <div className="profile-section-title"><Images size={20} aria-hidden="true"/><SectionTitle>일상 기록</SectionTitle></div>
     {!posts.length && <p className="profile-empty">아직 올라온 소식이 없어요.</p>}
     <div className="profile-album-grid">{posts.map(post => (
       <article className="profile-post" key={post.id}>
@@ -57,9 +58,9 @@ function Album({ profile, onQuote }: Pick<ProfileProps, 'profile' | 'onQuote'>) 
             {post.photo.ai_generated && <small>AI 생성 사진</small>}</div>
           <p>{post.caption}</p>
           <div className="profile-post-actions">
-            <a href={`/chat/from-post/${post.id}/`} onClick={event => {
+            <ReplyToPost id={post.id} name={profile.name} onClick={event => {
               if (onQuote && isPlainClick(event)) { event.preventDefault(); onQuote(post) }
-            }} aria-label={profile.name+'에게 이 사진으로 말 걸기'}><MessageCircle size={14}/>말 걸기</a>
+            }}/>
             <a href={`/feed/#post-${post.id}`}>피드에서 보기 <ArrowUpRight size={13}/></a>
           </div>
         </div>

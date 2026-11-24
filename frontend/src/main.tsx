@@ -1,3 +1,4 @@
+import { PageTitle } from './PageParts'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ArrowDown, ArrowUp, ChevronLeft, ImageOff, Info, X } from 'lucide-react'
@@ -395,9 +396,9 @@ function Messaging({ room }: { room?: number }) {
     }
   }, [])
   const unreadCount = inbox.friends?.reduce((total, friend) => total + friend.unread_count, 0) ?? 0
-  return <div className={'messaging' + (demo ? '' : ' user-layout user-layout--viewport') + (room === undefined ? ' inbox-page' : '')}>
+  return <div className={room === undefined ? 'people user-layout inbox-page' : 'messaging' + (demo ? '' : ' user-layout user-layout--viewport')}>
     {!demo && <UserNav page="messages" unreadCount={unreadCount}/>}
-    {room === undefined ? <main className="shell"><InboxList {...inbox}/><InboxPlaceholder hasConversations={Boolean(inbox.friends?.length)}/></main>
+    {room === undefined ? <main className="inbox-main"><PageTitle>메시지</PageTitle><div className="shell"><InboxList {...inbox}/><InboxPlaceholder hasConversations={Boolean(inbox.friends?.length)}/></div></main>
       : <Chat room={room} inbox={inbox}/>}
   </div>
 }

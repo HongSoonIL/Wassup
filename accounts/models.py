@@ -10,6 +10,7 @@ class User(AbstractUser):
     """
 
     nickname = models.CharField('닉네임', max_length=20, blank=True)
+    bio = models.CharField('한 줄 소개', max_length=80, blank=True, default='', db_default='')
     # 만 18세 이상만 가입한다 (설계서 2.3절). 나이 확인은 가입 API(부록 B)에서 한다.
     birth_year = models.PositiveSmallIntegerField('생년', null=True, blank=True)
     agreed_at = models.DateTimeField('대화 저장·AI 고지 동의 시각', null=True, blank=True)

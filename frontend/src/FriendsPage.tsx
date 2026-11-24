@@ -4,6 +4,8 @@ import { getProfile, messagePreview, request } from './chat'
 import type { Friend, Profile } from './chat'
 import FriendMemory from './FriendMemory'
 import FriendPortrait from './FriendPortrait'
+import MePage from './MePage'
+import { PageTitle, SectionTitle } from './PageParts'
 import RoomSettings from './RoomSettings'
 import { FriendIdentity } from './SocialMedia'
 import ProfileBody from './ProfileBody'
@@ -47,7 +49,7 @@ function Discover() {
     }
   }
   return <>
-    <h1>친구 찾기</h1>
+    <PageTitle>친구 찾기</PageTitle>
     <PageNotice {...result}/>{error && <p role="alert" className="people-alert">{error}</p>}
     {data && !data.characters.length && <p className="people-empty">지금은 추가할 친구가 없어요.</p>}
     <div className="discovery-grid">{data?.characters.map(person => <article className="discovery-card" key={person.id}>
@@ -90,7 +92,7 @@ function RecentPost() {
   const { data } = result
   const post = data?.posts[0]
   return <section className="home-latest" aria-label="최근 소식">
-    <div className="home-section-title"><h2>최근 소식</h2><a href="/feed/">피드 전체 보기 <ArrowRight size={15}/></a></div>
+    <div className="home-section-title"><SectionTitle>최근 소식</SectionTitle><a href="/feed/">피드 전체 보기 <ArrowRight size={15}/></a></div>
     <PageNotice {...result}/>
     {data && (post ? <a className="home-latest-card" href={`/feed/#post-${post.id}`}>
       <img src={post.photo.url} alt={post.photo.alt}/>
@@ -104,7 +106,7 @@ function RecentPost() {
 function Home({ overview }: { overview: ReturnType<typeof useFriendsOverview> }) {
   const { data } = overview
   return <>
-    <div className="people-heading"><h1>내 친구</h1><a className="people-secondary" href="/discover/"><Plus size={16}/>친구 찾기</a></div>
+    <PageTitle action={<a className="people-secondary" href="/discover/"><Plus size={16}/>친구 찾기</a>}>내 친구</PageTitle>
     <PageNotice {...overview}/>
     {data && (!data.friends.length
       ? <div className="people-empty"><UsersRound/><p>첫 친구를 추가해 보세요.</p><a href="/discover/">친구 찾기 <ArrowRight size={15}/></a></div>
@@ -147,7 +149,7 @@ export default function FriendsPage({ page, characterId }: { page: string; chara
   return <div className="people">
     <div className="user-layout">
       <UserNav page={page} unreadCount={overview.unreadCount}/>
-      <main className={'people-main people-'+page}>{page === 'discover' ? <Discover/> : page === 'profile'
+      <main className={'people-main people-'+page}>{page === 'me' ? <MePage friendCount={overview.data?.friends.length}/> : page === 'discover' ? <Discover/> : page === 'profile'
         ? <PersonProfile key={characterId} characterId={characterId}/> : <Home overview={overview}/>}</main>
     </div>
   </div>

@@ -138,7 +138,7 @@ class AccountEntryTests(TestCase):
     def test_browser_pages_require_login_and_only_show_owned_profiles(self):
         character = Character.objects.create(name='도현', age=23)
         profile = f'/people/{character.pk}/'
-        for url in ['/home/', '/messages/', '/discover/', profile]:
+        for url in ['/home/', '/messages/', '/me/', '/discover/', profile]:
             self.assertRedirects(self.client.get(url), '/login/?next=' + url)
         user = User.objects.create_user('first')
         self.client.force_login(user)
@@ -148,6 +148,7 @@ class AccountEntryTests(TestCase):
         for url, page, title in [
             ('/home/', 'home', '친구 홈'),
             ('/messages/', 'messages', '메시지'),
+            ('/me/', 'me', '내 프로필'),
             ('/discover/', 'discover', '친구 찾기'),
             (profile, 'profile', '친구 프로필'),
         ]:
@@ -159,3 +160,25 @@ class AccountEntryTests(TestCase):
                 self.assertNotContains(response, 'data-can-publish')
                 if page == 'profile':
                     self.assertEqual(response.context['character_id'], character.pk)
+
+    def test_profile_edit_is_session_scoped_and_preserves_other_account_fields(self):
+        user = User.objects.create_user('owner')
+        other = User.objects.create_user('someone', nickname='다른 사람')
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(user)
+        response = client.get('/me/')
+        self.assertEqual(response.context['my_profile']['nickname'], '')
+        self.assertNotContains(response, other.nickname)
+        payload = {'nickname': '민지', 'bio': '토요일엔 산책', 'id': other.pk, 'is_staff': '1'}
+        self.assertEqual(client.post('/me/', payload).status_code, 403)
+        payload['csrfmiddlewaretoken'] = client.cookies['csrftoken'].value
+        self.assertRedirects(client.post('/me/', payload), '/me/')
+        user.refresh_from_db()
+        other.refresh_from_db()
+        self.assertEqual((user.nickname, user.bio, user.is_staff), ('민지', '토요일엔 산책', False))
+        self.assertEqual(other.nickname, '다른 사람')
+        for invalid in ('a' * 81, '두 줄\n소개'):
+            response = client.post('/me/', {**payload, 'bio': invalid})
+            self.assertIn('bio', response.context['my_profile']['errors'])
+            user.refresh_from_db()
+            self.assertEqual(user.bio, '토요일엔 산책')

@@ -7,6 +7,18 @@ from django.utils import timezone
 from .models import User
 
 
+class ProfileForm(forms.ModelForm):
+    class Meta:
+        model = User
+        fields = ('nickname', 'bio')
+
+    def clean_bio(self):
+        value = self.cleaned_data['bio']
+        if len(value.splitlines()) > 1:
+            raise forms.ValidationError('한 줄로 적어 주세요.')
+        return value
+
+
 class AgreementCheckbox(forms.CheckboxInput):
     def value_from_datadict(self, data, files, name):
         # CheckboxInput treats every nonempty string except "false" as checked.

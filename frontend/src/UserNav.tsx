@@ -1,4 +1,4 @@
-import { Images, LogOut, MessageCircle, UsersRound } from 'lucide-react'
+import { Images, MessageCircle, CircleUserRound } from 'lucide-react'
 import { getFriends } from './chat'
 import type { Friend } from './chat'
 import { usePageData } from './usePageData'
@@ -7,7 +7,7 @@ import './user-nav.css'
 const destinations = [
   { page: 'feed', href: '/feed/', label: '피드', Icon: Images },
   { page: 'messages', href: '/messages/', label: '메시지', Icon: MessageCircle },
-  { page: 'home', href: '/home/', label: '친구', Icon: UsersRound },
+  { page: 'me', href: '/me/', label: '내 프로필', Icon: CircleUserRound },
 ] as const
 
 export type OverviewFriend = Friend & { current_activity?: string | null }
@@ -24,9 +24,7 @@ export function useFriendsOverview(enabled = true) {
 export function UserNav({ page, unreadCount }: { page: string; unreadCount?: number }) {
   const overview = useFriendsOverview(unreadCount === undefined)
   const unread = unreadCount ?? overview.unreadCount
-  const active = page === 'profile' || page === 'discover' ? 'home' : page
-  const csrf = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/)?.[1] || ''
-
+  const active = ['home', 'discover', 'profile'].includes(page) ? 'me' : page
   return <header className="user-nav">
     <a className="people-logo" href="/" aria-label="wassup 홈">wassup<span>.</span></a>
     <nav className="user-nav-links" aria-label="서비스 메뉴">
@@ -42,10 +40,6 @@ export function UserNav({ page, unreadCount }: { page: string; unreadCount?: num
         <span>{label}</span>
       </a>)}
     </nav>
-    <form className="user-nav-session" method="post" action="/logout/">
-      <input type="hidden" name="csrfmiddlewaretoken" value={csrf}/>
-      <button aria-label="로그아웃" title="로그아웃"><LogOut size={19} aria-hidden="true"/><span>로그아웃</span></button>
-    </form>
   </header>
 }
 

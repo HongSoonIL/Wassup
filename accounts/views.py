@@ -13,7 +13,7 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_GET, require_http_methods
 
-from .forms import SignupForm
+from .forms import ProfileForm, SignupForm
 from .models import User
 
 
@@ -69,3 +69,27 @@ def friends_page(request, page, character_id=None):
     if character_id is not None:
         get_object_or_404(request.user.friendships.only('pk'), character_id=character_id)
     return render(request, 'accounts/friends.html', {'page': page, 'character_id': character_id})
+
+
+@never_cache
+@login_required
+@ensure_csrf_cookie
+@require_http_methods(['GET', 'POST'])
+def my_profile(request):
+    user = request.user
+    section = request.GET.get('section', '')
+    form = ProfileForm(instance=user)
+    if request.method == 'POST':
+        section = 'edit'
+        form = ProfileForm(request.POST, instance=user)
+        if form.is_valid():
+            form.save(commit=False).save(update_fields=ProfileForm.Meta.fields)
+            return redirect('my-profile')
+    profile = {
+        'section': section if section in ('edit', 'settings') else 'overview',
+        'username': user.username,
+        'nickname': form['nickname'].value() or '',
+        'bio': form['bio'].value() or '',
+        'errors': {field: list(errors) for field, errors in form.errors.items()},
+    }
+    return render(request, 'accounts/friends.html', {'page': 'me', 'my_profile': profile})

@@ -331,7 +331,7 @@
   border: 1px solid var(--ws-line);
   border-radius: var(--ws-radius);
 }
-.feed-friends h2 { margin: 0 0 10px; font-size: 19px; font-weight: 800; letter-spacing: -.045em; }
+.feed-friends .ws-section-title { margin-bottom: 10px; }
 .feed-friends-list { margin: 0; padding: 0; list-style: none; }
 .feed-friends-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px; padding-block: 9px; }
 .feed-friends-list li + li { border-top: 1px solid var(--ws-line); }
@@ -352,17 +352,15 @@
 .feed-post:focus-visible { outline: 2px solid #68861e; outline-offset: 2px; }
 .feed-post-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 17px; }
 .feed-author { min-width: 0; display: flex; align-items: center; min-height: 44px; border-radius: 8px; }
-.feed-author .ws-identity strong { font-size: 17px; letter-spacing: -.045em; }
-.feed-author .ws-identity-detail { font-size: 12px; font-variant-numeric: tabular-nums; }
+.feed-author .ws-identity strong { font-size: var(--ws-body); }
+.feed-author .ws-identity-detail { font-size: var(--ws-meta); font-variant-numeric: tabular-nums; }
 .feed-ai { flex: none; color: var(--ws-muted); font-size: 10px; line-height: 1.5; padding: 3px 7px; border: 1px solid var(--ws-line); border-radius: 12px; }
 .feed-post .feed-post-photo { width: 100%; aspect-ratio: 1.38; border-radius: 0; }
 .feed-post-foot { padding: 16px 18px 17px; }
-.feed-post-foot > p { margin: 0 0 13px; color: var(--ws-ink); font-size: 17px; line-height: 1.55; letter-spacing: -.025em; white-space: pre-wrap; overflow-wrap: anywhere; }
+.feed-post-foot > p { margin: 0 0 13px; color: var(--ws-ink); font-size: var(--ws-body); line-height: 1.5; letter-spacing: normal; white-space: pre-wrap; overflow-wrap: anywhere; }
 .feed-post-foot .feed-quote { gap: 7px; }
 html:has(dialog.feed-profile-dialog[open]) { overflow: hidden; }
-@media (min-width: 681px) {
-  html:has(.feed-main) { scrollbar-gutter: stable; }
-}
+
 dialog.feed-profile-dialog {
   position: fixed;
   inset: 0;

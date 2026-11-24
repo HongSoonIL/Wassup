@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
-import { ArrowUpRight, CalendarDays, Check, ChevronDown, HeartHandshake, Image as ImageIcon, MessageCircle, RefreshCw, X } from 'lucide-react'
+import { ArrowUpRight, CalendarDays, Check, ChevronDown, Image as ImageIcon, MessageCircle, RefreshCw, X } from 'lucide-react'
 import './publication.css'
 import { getProfile, returnToLogin } from './chat'
 import type { Friend, PostSummary, Profile } from './chat'
@@ -8,6 +8,7 @@ import { getFeed, PersonProfile } from './FriendsPage'
 import type { FeedPage } from './FriendsPage'
 import { FriendIdentity, PostPhoto } from './SocialMedia'
 import { isPlainClick } from './ProfileBody'
+import { EmptyState, PageTitle, ReplyToPost, SectionTitle } from './PageParts'
 import PreviousPost from './PreviousPost'
 import { UserNav, useFriendsOverview } from './UserNav'
 
@@ -268,10 +269,10 @@ function Feed({ friends }: { friends?: Friend[] }) {
   }
 
   return <>
-    <div className="people-heading"><h1>친구 피드</h1><button className="feed-refresh" type="button" aria-label="피드 새로고침" disabled={busy} onClick={() => void load()}><RefreshCw size={17}/></button></div>
+    <PageTitle action={<button className="feed-refresh" type="button" aria-label="피드 새로고침" disabled={busy} onClick={() => void load()}><RefreshCw size={17}/></button>}>피드</PageTitle>
     {error && <div role="alert" className="people-alert">{error}<button onClick={() => void load(retryCursor.current)}>다시 시도</button></div>}
     {unavailable && <p role="status" className="people-note">이 게시물을 볼 수 없어요.</p>}
-    {page?.posts.length === 0 && <div className="people-empty"><HeartHandshake size={28}/><p>친구가 올린 소식이 여기에 보여요.</p><a href="/discover/">친구 만나기 <ArrowUpRight size={16}/></a></div>}
+    {page?.posts.length === 0 && <EmptyState action={<a className="people-secondary" href="/discover/">{friends?.length === 0 ? '첫 친구 만나기' : '친구 찾기'} <ArrowUpRight size={16}/></a>}>{friends?.length === 0 ? '친구를 추가하면 그 친구의 일상이 여기에 보여요.' : '아직 올라온 친구 소식이 없어요.'}</EmptyState>}
     <div className="feed-posts">{page?.posts.map(post => {
       const person = people.get(post.character_id) || { name: post.name, profile_image: null }
       return <article key={post.id} className="feed-post" id={'post-'+post.id} tabIndex={-1} aria-label={post.name+'의 소식'}>
@@ -286,7 +287,7 @@ function Feed({ friends }: { friends?: Friend[] }) {
         <PostPhoto src={post.photo.url} alt={post.photo.alt} className="feed-post-photo"/>
         <div className="feed-post-foot">
           <p>{post.caption}</p>
-          <a className="feed-quote" href={`/chat/from-post/${post.id}/`}><MessageCircle size={15}/>{post.name}에게 말 걸기<ArrowUpRight size={15}/></a>
+          <ReplyToPost id={post.id} name={post.name}/>
           {post.previous_post && <PreviousPost key={post.version} id={post.id} version={post.version}/>}
         </div>
       </article>
@@ -300,7 +301,7 @@ function Feed({ friends }: { friends?: Friend[] }) {
 function FeedFriends({ overview }: { overview: ReturnType<typeof useFriendsOverview> }) {
   const { data, error, retry } = overview
   return <aside className="feed-friends" aria-labelledby="feed-friends-heading">
-    <h2 id="feed-friends-heading">내 친구</h2>
+    <SectionTitle id="feed-friends-heading">내 친구</SectionTitle>
     {error && <p role="alert" className="people-alert">{error} <button type="button" onClick={retry}>다시 시도</button></p>}
     {!data && !error && <p role="status" className="people-note">친구 불러오는 중…</p>}
     {data && (data.friends.length ? <ul className="feed-friends-list">
