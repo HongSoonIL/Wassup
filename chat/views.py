@@ -6,7 +6,7 @@
 - 없는 채팅방 → 404
 메시지 보내기의 응답에는 답장이 담기지 않는다. 답장은 2단계부터 실시간 이벤트로 온다.
 
-CSRF: GET 응답이 csrftoken 쿠키를 심어 준다. 화면 JS는 POST할 때 그 값을
+CSRF: GET 응답이 csrftoken 쿠키를 심어 준다. 화면 JS는 POST, PATCH, DELETE 요청에 그 값을
 X-CSRFToken 헤더에 담아 보내야 한다. 없으면 Django가 403을 돌려준다.
 """
 import json
@@ -14,9 +14,11 @@ from functools import wraps
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
+from django.db import transaction
 from django.db.models import Count, F, OuterRef, Q, Subquery
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
@@ -53,9 +55,10 @@ def login_required_json(view):
     return wrapper
 
 
-def get_own_room(request, room_id):
+def get_own_room(request, room_id, *, lock=False):
     """없으면 404, 남의 방이면 None을 돌려준다 (호출한 쪽에서 403)."""
-    room = get_object_or_404(Friendship, pk=room_id)
+    rooms = Friendship.objects.select_for_update() if lock else Friendship.objects.all()
+    room = get_object_or_404(rooms, pk=room_id)
     return room if room.user_id == request.user.id else None
 
 
@@ -151,6 +154,33 @@ def friend_list(request):
     return json_response({'friends': friends})
 
 
+@require_http_methods(['GET', 'PATCH', 'DELETE'])
+@never_cache
+@ensure_csrf_cookie
+@login_required_json
+@transaction.atomic
+def friend_detail(request, room_id):
+    # Settings changes and cascades share the room lock taken by message, memory and reply writers.
+    room = get_own_room(request, room_id, lock=request.method != 'GET')
+    if room is None:
+        return error(403, '내 채팅방이 아니에요.')
+    if request.method == 'DELETE':
+        room.delete()
+        return HttpResponse(status=204)
+    if request.method == 'PATCH':
+        try:
+            body = json.loads(request.body)
+        except (ValueError, RecursionError):
+            return error(400, 'JSON 형식이 아니에요.')
+        if not isinstance(body, dict) or set(body) != {'proactive_enabled'} or type(body['proactive_enabled']) is not bool:
+            return error(400, 'proactive_enabled 값은 true나 false로 보내 주세요.')
+        if room.proactive_enabled != body['proactive_enabled']:
+            room.proactive_enabled = body['proactive_enabled']
+            room.proactive_revision += 1
+            room.save(update_fields=['proactive_enabled', 'proactive_revision'])
+    return json_response({'proactive_enabled': room.proactive_enabled})
+
+
 @require_http_methods(['GET', 'POST'])
 @ensure_csrf_cookie
 @login_required_json
@@ -181,6 +211,8 @@ def send_message(request, room):
         return error(400, 'source_post_id는 양의 정수여야 해요.')
     try:
         message = accept_message(room.id, text, source_id)
+    except Friendship.DoesNotExist:
+        return error(404, '채팅방을 찾을 수 없어요.')
     except FeedPost.DoesNotExist:
         return error(404, '이 게시물을 인용할 수 없어요.')
     return json_response(

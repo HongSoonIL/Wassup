@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import { ArrowRight, ArrowUpRight, ChevronRight, House, Images, LogOut, MessageCircle, Plus, UsersRound } from 'lucide-react'
 import { getFriends, getProfile, request } from './chat'
 import type { Friend, Profile } from './chat'
+import FriendMemory from './FriendMemory'
 import FriendPortrait from './FriendPortrait'
+import RoomSettings from './RoomSettings'
 import { FriendIdentity } from './SocialMedia'
 import ProfileBody from './ProfileBody'
 import './people.css'
@@ -146,7 +148,10 @@ export function PersonProfile({ characterId, load = getProfile }: { characterId:
   }, [characterId, load, attempt])
   if (error) return <div role="alert" className="people-alert">{error}<button onClick={() => setAttempt(n => n + 1)}>다시 시도</button></div>
   if (!profile) return <p role="status" className="people-note">프로필 불러오는 중…</p>
-  return <ProfileBody profile={profile}/>
+  return <ProfileBody profile={profile}>
+    <RoomSettings key={profile.room_id} room={profile.room_id} name={profile.name}/>
+    <FriendMemory key={'memory-' + profile.room_id} room={profile.room_id} name={profile.name}/>
+  </ProfileBody>
 }
 
 export function PeopleHeader({ page, canPublish }: { page: string; canPublish?: boolean }) {

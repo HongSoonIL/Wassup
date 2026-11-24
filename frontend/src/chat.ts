@@ -23,6 +23,7 @@ export type Friend = {
   unread_count: number
 }
 export type History = { messages: Message[]; has_more: boolean; typing_until?: string | null; current_activity?: string | null }
+export type FriendSettings = { proactive_enabled: boolean }
 
 export function returnToLogin() {
   const next = window.location.pathname + window.location.search
@@ -35,14 +36,45 @@ export class RequestError extends Error {
   }
 }
 
-export async function request<T>(url: string, init?: RequestInit): Promise<T> {
+async function apiResponse(url: string, init?: RequestInit) {
   const res = await fetch(url, { cache: 'no-store', ...init })
   if (res.status === 401) returnToLogin()
   if (!res.ok) {
     const body = await res.json().catch(() => null)
     throw new RequestError(res.status, body?.detail || '연결을 확인하고 다시 시도해 주세요.')
   }
-  return res.json()
+  return res
+}
+
+export async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  return (await apiResponse(url, init)).json()
+}
+
+function csrfToken() {
+  return document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/)?.[1] || ''
+}
+
+function friendUrl(room: number) {
+  return `/api/friends/${room}/`
+}
+
+export function getFriendSettings(room: number) {
+  return request<FriendSettings>(friendUrl(room))
+}
+
+export function updateFriendSettings(room: number, settings: FriendSettings) {
+  return request<FriendSettings>(friendUrl(room), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
+    body: JSON.stringify(settings),
+  })
+}
+
+export async function deleteFriend(room: number) {
+  await apiResponse(friendUrl(room), {
+    method: 'DELETE',
+    headers: { 'X-CSRFToken': csrfToken() },
+  })
 }
 
 export function getFriends() {
@@ -59,7 +91,7 @@ export function getProfile(characterId: number, cursor?: string) {
 }
 
 export function markRead(room: number, through: number) {
-  const csrf = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/)?.[1] || ''
+  const csrf = csrfToken()
   return request<{ unread_count: number }>(`/api/rooms/${room}/read/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
@@ -68,7 +100,7 @@ export function markRead(room: number, through: number) {
 }
 
 export async function sendMessage(room: number, text: string, quote: Quote | null = null): Promise<Message> {
-  const csrf = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/)?.[1]
+  const csrf = csrfToken()
   if (!csrf) throw new Error('세션을 확인한 뒤 새로고침해 주세요.')
   const receipt = await request<Pick<Message, 'id' | 'status' | 'created_at'>>(
     '/api/rooms/' + room + '/messages/',

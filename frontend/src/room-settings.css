@@ -1,0 +1,51 @@
+.room-settings {
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--ws-line);
+  border-radius: var(--ws-radius);
+  background: var(--ws-surface);
+  font-size: 14px;
+}
+.room-settings h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 17px;
+  line-height: 1.4;
+}
+.room-contact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0 14px;
+}
+.room-contact small { display: block; margin-top: 3px; color: var(--ws-muted); font-size: 13px; }
+.room-contact input { flex: none; width: 20px; height: 20px; accent-color: var(--ws-ink); }
+.room-settings button {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--ws-line);
+  border-radius: 10px;
+  background: var(--ws-surface);
+  color: inherit;
+  font: inherit;
+  font-weight: 650;
+}
+.room-settings .room-delete { color: #912f22; }
+.room-settings .room-delete-dialog {
+  box-sizing: border-box;
+  width: min(400px, calc(100% - 32px));
+  padding: 20px;
+  border: 1px solid var(--ws-line);
+  border-radius: var(--ws-radius);
+  background: var(--ws-surface);
+  color: var(--ws-ink);
+}
+.room-delete-dialog::backdrop { background: rgb(20 25 18 / 50%); }
+.room-delete-dialog p { margin: 0 0 16px; line-height: 1.6; }
+.room-delete-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.room-delete-actions .room-delete-confirm { background: #912f22; border-color: #912f22; color: white; }
+.room-settings-error { color: #912f22; }
+.room-delete-actions button[aria-disabled=true] { opacity: .65; cursor: wait; }

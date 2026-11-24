@@ -17,6 +17,8 @@ class Friendship(models.Model):
     # 대화가 남아 있는 캐릭터를 실수로 지우지 않도록 막는다
     character = models.ForeignKey(Character, on_delete=models.PROTECT, related_name='friendships')
     created_at = models.DateTimeField('친구 맺은 날', default=world_now)
+    proactive_enabled = models.BooleanField(default=False, db_default=False)
+    proactive_revision = models.PositiveBigIntegerField(default=0, db_default=0)
 
     class Meta:
         verbose_name = verbose_name_plural = '친구 관계(채팅방)'
@@ -145,3 +147,34 @@ class ReplyBubble(models.Model):
             models.Index(fields=['status', 'typing_at'], name='replybubble_typing_due'),
             models.Index(fields=['status', 'deliver_at'], name='replybubble_delivery_due'),
         ]
+
+
+class ProactiveClaim(models.Model):
+    """A schedule's generation lease, retry state and final decision."""
+
+    class Status(models.TextChoices):
+        PENDING = 'pending'
+        DECLINED = 'declined'
+        SENT = 'sent'
+
+    schedule = models.OneToOneField('memory.Memory', on_delete=models.CASCADE, related_name='proactive_claim')
+    day = models.DateField()
+    status = models.CharField(max_length=8, choices=Status.choices, default=Status.PENDING)
+    token = models.UUIDField(null=True, editable=False)
+    # Lease expiration while claimed, or the earliest retry when released.
+    available_at = models.DateTimeField(null=True)
+    inbound_through = models.PositiveBigIntegerField()
+    attempts = models.PositiveSmallIntegerField(default=0)
+
+
+class ProactiveDelivery(models.Model):
+    """The account's daily cap and the room's last turn in the rotation."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    room = models.ForeignKey(Friendship, null=True, on_delete=models.SET_NULL, db_index=False)
+    day = models.DateField()
+    sent_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['user', 'day'], name='proactive_user_day')]
+        indexes = [models.Index(fields=['room', '-sent_at'], name='proactive_last_delivery')]

@@ -6,6 +6,7 @@ import type { Message, Profile, Quote } from './chat'
 import useChatRoom from './useChatRoom'
 import Publication from './Publication'
 import FriendMemory from './FriendMemory'
+import RoomSettings from './RoomSettings'
 import FriendPortrait from './FriendPortrait'
 import FriendsPage from './FriendsPage'
 import ProfileBody from './ProfileBody'
@@ -369,7 +370,10 @@ function Chat() {
       {profileOpen && <>
         <header className="chat-profile-bar"><h2>친구 프로필</h2><button autoFocus className="icon-button" aria-label="닫기" onClick={closeProfile}><X size={21}/></button></header>
         {displayedProfile ? <ProfileBody profile={displayedProfile} onChat={closeProfile} onQuote={choosePost}>
-          {!demo && <FriendMemory room={room} name={name}/>}
+          {!demo && <>
+            <RoomSettings room={room} name={name}/>
+            <FriendMemory room={room} name={name}/>
+          </>}
         </ProfileBody> : profileError
           ? <p className="profile-load" role="alert">{profileError} <button onClick={() => setProfileAttempt(n => n + 1)}>다시 시도</button></p>
           : <p className="profile-load" role="status">프로필을 불러오는 중…</p>}

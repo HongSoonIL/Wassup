@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { getFriends, getMessages, mergeMessages, sendMessage } from './chat'
+import { getFriends, getMessages, mergeMessages, RequestError, sendMessage } from './chat'
 import type { Friend, Message, Quote } from './chat'
 import { subscribeToRoom } from './live'
 import { sampleFriend, sampleMessages } from './preview'
@@ -84,7 +84,13 @@ export default function useChatRoom(room: number, demo: boolean, onArrival: Arri
         setReady(true)
         setLoadError('')
       } catch (error) {
-        if (active) setLoadError((error as Error).message)
+        if (!active) return
+        if (error instanceof RequestError && error.status === 404) {
+          setReady(false)
+          window.location.replace('/home/')
+        } else {
+          setLoadError((error as Error).message)
+        }
       } finally {
         syncing = false
         if (active && needsSync) {

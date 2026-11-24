@@ -228,7 +228,7 @@ def dispatch_first(plan, now, events):
 
 
 def prepare_next_reply():
-    """Claim one generation independently of the dispatch loop and its deadline."""
+    """Return whether a generation was claimed, independently of its delivery deadline."""
     now = world_now()
     with transaction.atomic():
         # A room revision only increases. Include already prepared (or leased)
@@ -242,11 +242,11 @@ def prepare_next_reply():
         candidate = (pending.select_related('room').select_for_update(skip_locked=True, of=('room',))
                      .order_by('reply_at', 'id').first())
         if candidate is None:
-            return
+            return False
         # Re-read plan eligibility after obtaining the common room lock.
         plan = pending.filter(pk=candidate.pk).first()
         if plan is None:
-            return
+            return False
         context = context_for(plan, now)
         token = uuid4()
         plan.generation_token, plan.generation_until = token, now + timedelta(seconds=30)
@@ -275,14 +275,14 @@ def prepare_next_reply():
         result, model_name = {'bubbles': sample_reply(context), 'used_memory_ids': []}, 'fallback'
     with transaction.atomic():
         if not Friendship.objects.select_for_update().filter(pk=plan.room_id).first():
-            return
+            return True
         claimed = ReplyPlan.objects.filter(pk=plan.pk, status__in=BEFORE_FIRST, generation_token=token,
                                            trigger_message_id=plan.trigger_message_id)
         if memory_revision(plan.room_id) != plan.memory_revision or world_now() >= plan.reply_at:
             # Nothing from the old snapshot reaches durable storage. A new
             # generation may claim immediately, up to the original deadline.
             claimed.update(generation_token=None, generation_until=None)
-            return
+            return True
         claimed.update(
             result=result['bubbles'],
             used_memory_ids=result['used_memory_ids'],
@@ -292,3 +292,4 @@ def prepare_next_reply():
             generation_until=None,
             context_versions={str(p['id']): p['version'] for p in context['shared_events']},
         )
+    return True

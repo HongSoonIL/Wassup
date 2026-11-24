@@ -8,6 +8,9 @@
 |---|---|
 | `GET /api/characters/` | 공개 프로필 목록 `characters`를 반환한다. 각 항목의 `room_id`는 이미 추가한 친구의 방 번호이며, 추가 전에는 `null`이다. |
 | `POST /api/friends/` | `{"character_id":1}`를 보내면 `{"room_id":3}` 형식으로 방 번호를 반환한다. 새 방은 `201`, 이미 친구면 `200`이다. |
+| `GET /api/friends/{room_id}/` | 이 친구의 먼저 연락받기 설정을 `{"proactive_enabled":false}` 형식으로 반환한다. |
+| `PATCH /api/friends/{room_id}/` | `{"proactive_enabled":true}` 또는 `false`를 보내면 저장된 설정을 반환한다. 기억 저장 동의는 별도로 관리한다. |
+| `DELETE /api/friends/{room_id}/` | 이 친구 관계와 대화·기억·예약을 삭제하고 본문 없이 `204`를 반환한다. 다시 친구로 추가하면 새로운 방 번호를 받는다. |
 | `GET /api/rooms/{room_id}/messages/` | `200`. `{"messages": [], "has_more": false}` 형식. 기본 30개를 오래된 순서로 표시한다. 이전 페이지는 가장 작은 메시지 ID를 `before`에 넣어 요청한다. |
 | `POST /api/rooms/{room_id}/messages/` | `{"text":"뭐해?"}`를 보내면 `201`과 `{"id":41,"status":"sent","created_at":"2026-11-26T18:40:00+09:00"}`가 돌아온다. 보낸 본문과 반환된 ID로 내 말풍선을 표시한다. |
 | `POST /api/rooms/{room_id}/read/` | 사용자가 열린 방에서 본 상대 말풍선의 ID를 `{"through_id":42}`로 보낸다. 서버가 그 ID까지 받은 말풍선을 읽음 처리하고 남은 `unread_count`를 돌려준다. |
