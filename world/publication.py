@@ -294,3 +294,7 @@ def dispatch_publications(now=None, limit=100):
                 '' if available else '사진을 읽을 수 없어요. 자산을 복구한 뒤 다시 시도해 주세요.'
             )
             post.save(update_fields=['state', 'published_at', 'last_error'])
+
+
+def published_posts(character_id, now):
+    return FeedPost.objects.filter(character_id=character_id, state=State.PUBLISHED, published_at__lte=now)

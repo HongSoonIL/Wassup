@@ -169,3 +169,7 @@ STORAGES = {
         'OPTIONS': {'location': os.environ.get('POST_PHOTO_DIR', BASE_DIR / 'private-media')},
     },
 }
+
+LLM_BACKEND = os.environ.get('LLM_BACKEND', 'fake')
+LLM_MODEL = os.environ.get('LLM_MODEL', '')
+LLM_API_KEY = os.environ.get('LLM_API_KEY') or os.environ.get('OPENAI_API_KEY', '')

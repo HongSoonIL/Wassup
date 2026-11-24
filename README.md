@@ -60,11 +60,11 @@ await fetch(`/api/rooms/${roomId}/messages/`, {
 
 ### 브라우저로 직접 확인하기
 
-아직 로그인 API가 없어서 admin 로그인 세션을 빌려 쓴다.
+채팅과 피드는 Django 세션을 공유한다.
 
-1. `/admin/`에 superuser로 로그인한다.
+1. 운영 계정으로 `/admin/`에 로그인한다.
 2. admin의 **친구 관계(채팅방)** 에서 내 계정과 도현을 친구로 추가한다.
-3. 같은 브라우저에서 `/api/friends/`와 `/api/rooms/{id}/messages/`를 연다.
+3. 해당 계정으로 `/login/`에 로그인한 브라우저에서 `/api/friends/`와 `/api/rooms/{id}/messages/`를 연다.
 
 ## 주간 승인과 실제 친구 피드
 
@@ -83,7 +83,15 @@ python manage.py runserver
 - **주간 계획.** 운영자가 월요일을 선택해 열면 워커가 가상 학교 달력으로 후보를 만든다. 첫 구현은 시험·체육대회·방학·평상시의 고정 문구와 기존 사진을 사용한다. 시드는 2027년 4월 19일 주간의 중간고사와 체육대회를 포함한다. 다른 주의 행사는 admin의 School events에서 등록한다.
 - **운영 검토.** 사진 없는 후보는 수정하거나 제외한 뒤 승인한다. 실제 시계 기준 과거 시각은 승인할 수 없다. 일정 변경 시 해당 행사를 참조하는 미발행 후보만 재검토하며, 실패한 사진은 자산 복구 후 같은 카드에서 재시도한다.
 - **공개.** 친구 관계와 발행 성공 시각을 확인한 후 피드·프로필 API·사진을 제공한다. 발행 사진은 `POST_PHOTO_DIR`(기본 `private-media/`)에 보관한다. 웹 서버에서 이 디렉터리를 정적 경로로 공개하지 않는다. 새로고침이나 탭 복귀로 최신 피드를 읽는다.
-- **검증.** PostgreSQL에서 `python manage.py test dashboard.test_publication`으로 두 계정의 접근 범위, 일정 변경, 동시 승인·중복 실행, 오류 후 재시도를 확인한다. 이후 사진 인용 대화와 모델 연결의 계약은 [시험 주간 통합 설계](docs/design/exam-week.md)에 있다.
+- **검증.** PostgreSQL에서 `python manage.py test dashboard.test_publication`으로 두 계정의 접근 범위, 일정 변경, 동시 승인·중복 실행, 오류 후 재시도를 확인한다. 사진 인용 대화와 모델 연결의 설계는 [시험 주간 통합 설계](docs/design/exam-week.md)에 있다.
+
+## 피드 사진으로 대화하기
+
+친구 계정으로 `/feed/`에서 사진이나 ‘말 걸기’를 누르면 기존 방의 입력창에 그 게시물이 붙는다. 전송 전에는 인용을 해제할 수 있다. 헤더의 이름·사진 또는 말풍선 옆 얼굴을 누르면 그 친구의 프로필과 공개 사진을 볼 수 있다.
+
+웹 서버와 별도 터미널에서 `python manage.py run_reply_worker`를 실행한다. 기본값 `LLM_BACKEND=fake`에서는 키 없이 검수된 샘플 문구를 사용한다. 실제 모델을 쓰려면 서버의 `.env`에 `LLM_BACKEND=openai`, `LLM_MODEL`(구조화 출력을 지원하는 모델 ID), `LLM_API_KEY`를 설정하고 웹과 답장 워커를 재시작한다. 로컬 시연의 `WASSUP_REPLY_DEMO_SECONDS`는 모델 호출 시간을 확보하려면 0으로 되돌린다.
+
+답장 워커는 해당 방의 한국 시각 기준 당일 메시지 중 최근 16개, 캐릭터 설정·현재 일과, 최근 공개 게시물 최대 4건 및 인용한 공개본을 텍스트로 보낸다. 호출은 `store: false`로 구성한다. 공급자 오류나 발송 기한 초과 시 검수된 답장을 보내며, 주간 후보 생성은 별도의 고정 생성기를 쓴다. [OpenAI Responses API](https://developers.openai.com/api/reference/resources/responses/methods/create)
 
 ## 첫 베타 화면 시안
 

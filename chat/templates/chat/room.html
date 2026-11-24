@@ -9,7 +9,8 @@
     <script type="module" src="{% static 'assets/chat.js' %}"></script>
 </head>
 <body>
-    <div id="root" data-room-id="{{ room_id }}"></div>
+    {{ initial_quote|json_script:"initial-quote" }}
+    <div id="root" data-room-id="{{ room_id }}" data-sample-replies="{{ sample_replies|yesno:'true,false' }}"></div>
     <noscript>채팅을 사용하려면 브라우저에서 자바스크립트를 켜 주세요.</noscript>
 </body>
 </html>

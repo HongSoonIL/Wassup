@@ -17,7 +17,7 @@ from django.views.decorators.http import require_GET, require_POST, require_http
 from chat.models import Friendship
 from chat.serialization import iso
 from chat.views import error, json_response, login_required_json
-from world.clock import world_now
+from world.clock import routine_at, world_now
 from world.models import FeedPost, PostPhoto, PublicationWeek
 from world.publication import ReviewError, approve, edit, issues, retry
 
@@ -244,12 +244,7 @@ def profile(request, character_id):
     )
     char = room.character
     now = timezone.localtime(world_now())
-    slot = (
-        char.routines.filter(weekday=now.weekday(), start_time__lte=now.time())
-        .filter(Q(end_time__gt=now.time()) | Q(end_time='00:00'))
-        .order_by('-start_time')
-        .first()
-    )
+    slot = routine_at(char, now)
     try:
         result = page(request, visible(request.user).filter(character=char))
     except ReviewError as exc:

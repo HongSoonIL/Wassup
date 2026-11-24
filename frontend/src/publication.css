@@ -94,7 +94,9 @@
   overflow: hidden;
   max-width: 640px;
 }
-.pub-card > img {
+.pub-photo-link { display: block; }
+.pub-photo-link img {
+  display: block;
   width: 100%;
   aspect-ratio: 1.7;
   object-fit: cover;
@@ -188,3 +190,4 @@
     padding-top: 20px;
   }
 }
+.pub .pub-talk {display:inline-block;margin:6px 12px 0 0;padding:8px 12px;border-radius:18px;background:#daef91;color:#344429;font-size:14px;font-weight:700;text-decoration:none}

@@ -43,6 +43,8 @@ class Message(models.Model):
     sender = models.CharField('보낸 쪽', max_length=10, choices=Sender.choices)
     kind = models.CharField('종류', max_length=10, choices=Kind.choices, default=Kind.TEXT)
     text = models.TextField('내용', blank=True)
+    source_post = models.ForeignKey('world.FeedPost', null=True, blank=True, on_delete=models.PROTECT)
+    source_version = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField('보낸 시각', default=world_now)
     # 사용자 메시지: 캐릭터가 읽은 시각 (숫자 1이 사라짐) / 캐릭터 메시지: 사용자가 읽은 시각
     read_at = models.DateTimeField('읽은 시각', null=True, blank=True)
@@ -86,6 +88,9 @@ class ReplyPlan(models.Model):
     reply_at = models.DateTimeField('답장 시각')
     result = models.JSONField('생성 결과', default=list, blank=True, help_text='말풍선 문장 목록')
     status = models.CharField('상태', max_length=12, choices=Status.choices, default=Status.PLANNED)
+    generation_token = models.UUIDField(null=True, editable=False)
+    generation_until = models.DateTimeField(null=True, editable=False)
+    context_versions = models.JSONField(default=dict, blank=True)
     model_name = models.CharField('사용 모델', max_length=50, blank=True)
     attempts = models.PositiveSmallIntegerField('시도 수', default=0)
     created_at = models.DateTimeField(auto_now_add=True)

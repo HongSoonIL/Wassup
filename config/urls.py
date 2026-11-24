@@ -19,12 +19,13 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 
-from chat.views import chat_page
+from chat.views import chat_page, from_post
 
 urlpatterns = [
     path('', include('dashboard.urls')),
     path('admin/', admin.site.urls),
     path('api/', include('chat.urls')),
+    path('chat/from-post/<int:post_id>/', from_post),
     path('chat/<int:room_id>/', chat_page, name='chat-page'),
 ]
 

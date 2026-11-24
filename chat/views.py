@@ -12,15 +12,19 @@ X-CSRFToken 헤더에 담아 보내야 한다. 없으면 Django가 403을 돌려
 import json
 from functools import wraps
 
+from django.conf import settings
 from django.db.models import Count, F, OuterRef, Q, Subquery
 from django.http import JsonResponse
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_http_methods
 
 from .models import Friendship, Message
+from world.clock import world_now
+from world.publication import published_posts
+from world.models import FeedPost
 from .replies import accept_message
-from .serialization import iso, message_json
+from .serialization import iso, message_json, quote_json
 
 MESSAGE_MAX_LENGTH = 1000
 PAGE_SIZE = 30
@@ -61,7 +65,24 @@ def chat_page(request, room_id):
     room = get_own_room(request, room_id)
     if room is None:
         return error(403, '내 채팅방이 아니에요.')
-    return render(request, 'chat/room.html', {'room_id': room.pk})
+    source = request.GET.get('source_post')
+    quote = None
+    if source is not None:
+        valid = source.isascii() and source.isdigit() and len(source) <= 19 and 0 < int(source) < 2**63
+        post = published_posts(room.character_id, world_now()).filter(pk=int(source)).first() if valid else None
+        quote = quote_json(post) if post else {'status': 'unavailable'}
+    return render(request, 'chat/room.html', {
+        'room_id': room.pk, 'initial_quote': quote,
+        'sample_replies': settings.DEBUG and settings.LLM_BACKEND == 'fake',
+    })
+
+
+@require_GET
+@login_required_json
+def from_post(request, post_id):
+    post = get_object_or_404(FeedPost, pk=post_id, state='published', published_at__lte=world_now())
+    room = get_object_or_404(Friendship, user=request.user, character_id=post.character_id)
+    return redirect(f'/chat/{room.pk}/?source_post={post.pk}')
 
 
 @require_GET
@@ -84,7 +105,7 @@ def friend_list(request):
         )
         .order_by(F('last_message_id').desc(nulls_last=True), '-created_at')
     )
-    last_messages = Message.objects.in_bulk([r.last_message_id for r in rooms if r.last_message_id])
+    last_messages = Message.objects.select_related('source_post', 'room').in_bulk([r.last_message_id for r in rooms if r.last_message_id])
 
     friends = []
     for room in rooms:
@@ -129,7 +150,13 @@ def send_message(request, room):
     if len(text) > MESSAGE_MAX_LENGTH:
         return error(400, f'메시지는 {MESSAGE_MAX_LENGTH}자까지 보낼 수 있어요.')
 
-    message = accept_message(room.id, text)
+    source_id = body.get('source_post_id')
+    if 'source_post_id' in body and (type(source_id) is not int or not 0 < source_id < 2**63):
+        return error(400, 'source_post_id는 양의 정수여야 해요.')
+    try:
+        message = accept_message(room.id, text, source_id)
+    except FeedPost.DoesNotExist:
+        return error(404, '이 게시물을 인용할 수 없어요.')
     return json_response(
         {'id': message.id, 'status': message.status, 'created_at': iso(message.created_at)},
         status=201,
@@ -151,7 +178,7 @@ def list_messages(request, room):
         return error(400, 'limit은 1 이상이어야 해요.')
     limit = min(limit, PAGE_SIZE_MAX)
 
-    qs = room.messages.order_by('-id')
+    qs = room.messages.select_related('source_post', 'room').order_by('-id')
     if before is not None:
         qs = qs.filter(id__lt=before)
     page = list(qs[:limit + 1])  # 하나 더 가져와서 더 있는지 본다

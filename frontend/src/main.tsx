@@ -1,11 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ArrowUp, ChevronLeft, Coffee, Info, MessageCircle, X, ZoomIn } from 'lucide-react'
-import { getFriends, getMessages, mergeMessages, sendMessage } from './chat'
-import type { Friend, Message } from './chat'
+import { getFriends, getMessages, getProfile, mergeMessages, sendMessage } from './chat'
+import type { Friend, Message, Profile, Quote } from './chat'
 import { subscribeToRoom } from './live'
 import { sampleFriend, sampleMessages } from './preview'
 import Publication from './Publication'
+import seoyunPortrait from './design/assets/seoyun.webp'
+import dohyunPortrait from './assets/dohyun.webp'
 import './style.css'
 
 const root = document.getElementById('root')!
@@ -16,9 +18,12 @@ const calendar = new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: 'lon
 const day = (message: Message) => calendar.format(new Date(message.created_at))
 const hour = (message: Message) => clock.format(new Date(message.created_at))
 
+const portraits: Record<string, string> = { 서윤: seoyunPortrait, 도현: dohyunPortrait }
+
 function Avatar({ friend }: { friend?: Friend }) {
-  return friend?.character.profile_image
-    ? <img className="avatar" src={friend.character.profile_image} alt="" />
+  const source = friend && (friend.character.profile_image || portraits[friend.character.name])
+  return source
+    ? <img className="avatar" src={source} alt="" />
     : <span className="avatar initials" aria-hidden="true">{friend?.character.name[0] || '·'}</span>
 }
 
@@ -26,7 +31,16 @@ function Brand() {
   return <span className="brand" aria-label="wassup">wassup<span className="brand-dot">.</span></span>
 }
 
+function QuoteCard({ quote }: { quote: Quote }) {
+  if (quote.status === 'unavailable') return <div className="chat-quote">공개가 종료된 게시물이에요.</div>
+  return <div className="chat-quote"><img src={quote.photo_url} alt={quote.photo_alt}/><span><small>인용한 게시물</small>{quote.caption}</span></div>
+}
+
 function Chat() {
+  const [quote, setQuote] = useState<Quote | null>(() => JSON.parse(document.getElementById('initial-quote')?.textContent || 'null'))
+  const [profile, setProfile] = useState<Profile | null>(null)
+  const [profileError, setProfileError] = useState('')
+
   const [friends, setFriends] = useState<Friend[]>(demo ? [sampleFriend] : [])
   const [messages, setMessages] = useState<Message[]>(demo ? sampleMessages : [])
   const [ready, setReady] = useState(demo)
@@ -43,6 +57,8 @@ function Chat() {
   const scroll = useRef<HTMLDivElement>(null)
   const dialog = useRef<HTMLDialogElement>(null)
   const pin = useRef(true)
+  const profileScroll = useRef<number | null>(null)
+  const [newBelow, setNewBelow] = useState(false)
   const prepend = useRef<number | null>(null)
   const timers = useRef<number[]>([])
   const lock = useRef(false)
@@ -101,6 +117,7 @@ function Chat() {
           break
         case 'message.new':
           stopTyping()
+          if (!pin.current || profileScroll.current !== null) setNewBelow(true)
           setMessages(old => mergeMessages(old, [event.message]))
           break
         case 'typing.start': {
@@ -135,7 +152,7 @@ function Chat() {
 
   useLayoutEffect(() => {
     const el = scroll.current
-    if (!el) return
+    if (!el || profileScroll.current !== null) return
     if (prepend.current !== null) {
       el.scrollTop += el.scrollHeight - prepend.current
       prepend.current = null
@@ -148,7 +165,7 @@ function Chat() {
     const resize = () => {
       if (viewport.scale !== 1) return
       document.documentElement.style.setProperty('--chat-height', viewport.height + 'px')
-      if (pin.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight
+      if (profileScroll.current === null && pin.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight
     }
     resize()
     viewport.addEventListener('resize', resize)
@@ -194,18 +211,63 @@ function Chat() {
 
   async function submit() {
     const text = draft.trim()
-    if (!text || lock.current || !ready || listOpen) return
+    if (!text || lock.current || !ready || listOpen || quote?.status==='unavailable') return
     lock.current = true
     setBusy(true)
     setSendError('')
     try {
-      const sent = demo ? localSend(text) : await sendMessage(room, text)
+      const sent = demo ? localSend(text) : await sendMessage(room, text, quote)
+      clearQuote()
       pin.current = true
       setMessages(old => mergeMessages(old, [sent]))
       setDraft(value => value.trim() === text ? '' : value)
     } catch (e) { setSendError((e as Error).message) }
     finally { lock.current = false; setBusy(false) }
   }
+
+  function clearQuote() {
+    setQuote(null)
+    const url = new URL(location.href)
+    url.searchParams.delete('source_post')
+    history.replaceState(history.state, '', url)
+  }
+
+  useLayoutEffect(() => {
+    const thread = scroll.current
+    if (!thread) return
+    if (modal === 'profile') {
+      profileScroll.current = thread.scrollTop
+    } else if (profileScroll.current !== null) {
+      thread.scrollTop = profileScroll.current
+      profileScroll.current = null
+      pin.current = thread.scrollHeight - thread.clientHeight - thread.scrollTop < 64
+      if (pin.current) setNewBelow(false)
+    }
+  }, [modal])
+
+  function openProfile() {
+    history.pushState({...history.state, chatProfile: true}, '')
+    setModal('profile')
+  }
+  function closeModal() {
+    if (modal === 'profile' && history.state?.chatProfile) history.back()
+    else setModal(null)
+  }
+  useEffect(() => {
+    const restore = () => setModal(history.state?.chatProfile ? 'profile' : null)
+    restore()
+    window.addEventListener('popstate', restore)
+    return () => window.removeEventListener('popstate', restore)
+  }, [])
+  useEffect(() => {
+    if (modal !== 'profile' || demo || !friend) return
+    let active = true
+    setProfileError('')
+    getProfile(friend.character.id)
+      .then(next => { if (active) setProfile(next) })
+      .catch(e => { if (active) setProfileError((e as Error).message) })
+    return () => { active = false }
+  }, [modal, friend?.character.id])
 
   const showPhoto = (url: string) => { setPhoto(url); setModal('photo') }
   const rows = friends.map(f => {
@@ -224,18 +286,18 @@ function Chat() {
       <Brand/>
       <div className="side-heading"><h2>대화</h2><span>{friends.length}</span>{!demo && <a href="/feed/">친구 피드 ↗</a>}</div>
       <nav>{rows}</nav>
-      {latestPhoto && <section className="side-photo"><h3>대화 속 사진</h3><button onClick={() => showPhoto(latestPhoto)}><img src={latestPhoto} alt="도현이 보내온 카페 사진"/><ZoomIn size={17}/></button></section>}
+      {latestPhoto && <section className="side-photo"><h3>대화 속 사진</h3><button onClick={() => showPhoto(latestPhoto)}><img src={latestPhoto} alt="대화에서 받은 사진"/><ZoomIn size={17}/></button></section>}
       {demo && <small className="preview-note">샘플 대화 미리보기</small>}
     </aside>
     <section className="chat-pane" aria-label={name + ' 채팅방'}>
       <header className="chat-head">
         <button className="back icon-button" aria-label="대화 목록" onClick={() => setListOpen(true)}><ChevronLeft/></button>
-        <Avatar friend={friend}/><div className="head-title"><h1>{name}</h1><span>AI 친구</span>{demo && <small className="demo-tag">미리보기</small>}</div>
-        <button className="icon-button info" onClick={() => setModal('profile')} aria-label="친구 정보"><Info size={21}/></button>
+        <button className="chat-person" aria-label={name+' 프로필'} onClick={openProfile}><Avatar friend={friend}/><span className="head-title"><b>{name}</b><span>AI 친구</span>{(demo || root.dataset.sampleReplies === 'true') && <small className="demo-tag">{demo ? '미리보기' : '샘플 답장'}</small>}</span></button>
+        <button className="icon-button info" onClick={openProfile} aria-label="친구 정보"><Info size={21}/></button>
       </header>
       {status && <div className="status-strip">{status.includes('카페') ? <Coffee size={15}/> : <MessageCircle size={15}/>}<span>{status}</span><i/></div>}
       {loadError && <p className="notice" role="status">{loadError}</p>}
-      <div className="thread" ref={scroll} onScroll={e => { const el = e.currentTarget; pin.current = el.scrollHeight - el.clientHeight - el.scrollTop < 64 }}>
+      <div className="thread" ref={scroll} onScroll={e => { const el = e.currentTarget; pin.current = el.scrollHeight - el.clientHeight - el.scrollTop < 64; if (pin.current) setNewBelow(false) }}>
         <div className="thread-inner">
           {more && <button className="older" onClick={older} disabled={paging}>{paging ? '불러오는 중…' : '이전 대화 보기'}</button>}
           {!messages.length && <p className="empty">{ready ? name + '에게 첫 메시지를 보내 보세요.' : '대화 불러오는 중…'}</p>}
@@ -247,12 +309,13 @@ function Chat() {
             return <div key={m.id}>
               {newDay && <div className="day"><span>{day(m)}</span></div>}
               <div className={'line ' + (own ? 'out' : 'in') + (start ? ' start' : '')}>
-                {!own && <div className="face-slot">{start && <Avatar friend={friend}/>}</div>}
+                {!own && <div className="face-slot">{start && <button aria-label={name+' 프로필 열기'} onClick={openProfile}><Avatar friend={friend}/></button>}</div>}
                 <div className="message-body">
                   {!own && start && <b className="speaker">{name}</b>}
                   <div className="bubble-row">
                     <div className={'bubble' + (m.photo ? ' with-photo' : '')}>
-                      {m.photo && <button className="photo" onClick={() => showPhoto(m.photo!)}><img src={m.photo} alt="도현이 보낸 카페 사진 확대"/></button>}
+                      {m.source_post && <QuoteCard quote={m.source_post}/>}
+                      {m.photo && <button className="photo" onClick={() => showPhoto(m.photo!)}><img src={m.photo} alt="채팅 사진 확대"/></button>}
                       {(m.text || m.kind === 'photo') && <span>{m.text || '사진'}</span>}
                     </div>
                     <small className="timestamp">{own && !m.read_at && <strong aria-label="읽지 않음">1</strong>}{hour(m)}</small>
@@ -264,21 +327,25 @@ function Chat() {
           {typing && <div className="typing" role="status" aria-label={name + ' 입력 중'}><i/><i/><i/></div>}
         </div>
       </div>
+      {newBelow && <button className="older" onClick={() => { if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; setNewBelow(false) }}>새 메시지 보기 ↓</button>}
       <footer className="foot">
+        {quote && <div className="quote-draft"><QuoteCard quote={quote}/><button aria-label="인용 해제" disabled={busy} onClick={clearQuote}><X size={17}/></button></div>}
         {sendError && <p role="alert" className="notice">{sendError}</p>}
         <form className="composer" onSubmit={e => { e.preventDefault(); void submit() }}>
           <textarea aria-label="메시지" rows={1} maxLength={1000} placeholder="메시지 보내기" value={draft}
             onChange={e => setDraft(e.target.value)} onKeyDown={e => {
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) { e.preventDefault(); void submit() }
             }}/>
-          <button className="send" aria-label="전송" disabled={!draft.trim() || busy || !ready}><ArrowUp size={22}/></button>
+          <button className="send" aria-label="전송" disabled={!draft.trim() || busy || !ready || quote?.status==='unavailable'}><ArrowUp size={22}/></button>
         </form>
       </footer>
     </section>
-    <dialog aria-label={modal === 'photo' ? '사진 보기' : '친구 정보'} ref={dialog} onCancel={() => setModal(null)} onClose={() => setModal(null)}>
-      <button className="close icon-button" aria-label="닫기" onClick={() => setModal(null)}><X size={18}/></button>
+    <dialog aria-label={modal === 'photo' ? '사진 보기' : '친구 정보'} ref={dialog} onCancel={e => {e.preventDefault();closeModal()}}>
+      <button className="close icon-button" aria-label="닫기" onClick={closeModal}><X size={18}/></button>
       {modal === 'photo' ? <><img className="large-photo" src={photo} alt="대화에서 받은 사진"/><small>AI 생성 사진</small></>
-        : <><Avatar friend={friend}/><h2>{name}</h2><small>AI 친구</small>{status && <p>{status}</p>}</>}
+        : <><Avatar friend={friend}/><h2>{name}</h2><small>AI 친구</small>{status && <p>{status}</p>}{profile?.current_activity && <p>{profile.current_activity}</p>}
+          {profileError && <p role="alert">{profileError}</p>}
+          {profile && <div className="profile-album">{profile.posts.map(p=><figure key={p.id}><img src={p.photo.url} alt={p.photo.alt}/><figcaption>{p.caption}</figcaption></figure>)}</div>}</>}
     </dialog>
   </main>
 }

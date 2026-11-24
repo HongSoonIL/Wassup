@@ -14,7 +14,7 @@ from world.models import Character, Persona, RoutineTemplate, State
 
 CHARACTERS = [
     {
-        'character': {'name': '도현', 'age': 23, 'major': '경영학과 3학년', 'status_message': ''},
+        'character': {'name': '도현', 'age': 23, 'major': '경영학과 3학년', 'status_message': '쉬는 날에도 커피 마심'},
         'persona': {
             'personality': '무심한 현실파. 장난과 현실 조언이 먼저지만 결국 챙긴다. '
                            '학교 앞 자취, 저녁 카페 알바, 풋살 동아리. 늦잠, 수업은 겨우 출석, 금요일 동아리 뒤풀이.',
@@ -47,7 +47,7 @@ CHARACTERS = [
         ],
     },
     {
-        'character': {'name': '서윤', 'age': 22, 'major': '시각디자인과 3학년', 'status_message': ''},
+        'character': {'name': '서윤', 'age': 22, 'major': '시각디자인과 3학년', 'status_message': '두부 사진 거의 매일 올라옴'},
         'persona': {
             'personality': '리액션이 큰 공감파. 일단 들어 주고 같이 화내 준다. '
                            '본가에서 통학, 고양이 "두부"와 산다. 오전 실기 수업, 오후 작업실, 밤에 과제하면서 답장이 빠르다.',

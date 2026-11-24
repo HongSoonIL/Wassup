@@ -125,11 +125,14 @@ function Feed() {
       <div className="pub-grid">
         {page?.posts.map((p) => (
           <article key={p.id} className="pub-card">
-            <img src={p.photo.url} alt={p.photo.alt} />
+            <a className="pub-photo-link" href={`/chat/from-post/${p.id}/`} aria-label={`${p.name}에게 이 사진으로 말 걸기`}>
+              <img src={p.photo.url} alt={p.photo.alt} />
+            </a>
             <div className="pub-info">
               <strong>{p.name}</strong>
               <time>{stamp.format(new Date(p.published_at))}</time>
               <p>{p.caption}</p>
+              <a className="pub-talk" href={`/chat/from-post/${p.id}/`}>{p.name}에게 말 걸기 ↗</a>
               {p.photo.ai_generated && <small>AI 생성 사진</small>}
             </div>
           </article>
