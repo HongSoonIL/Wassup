@@ -6,6 +6,7 @@ import type { Friend, Message, Profile, Quote } from './chat'
 import { subscribeToRoom } from './live'
 import { sampleFriend, sampleMessages } from './preview'
 import Publication from './Publication'
+import FriendMemory from './FriendMemory'
 import seoyunPortrait from './design/assets/seoyun.webp'
 import dohyunPortrait from './assets/dohyun.webp'
 import './style.css'
@@ -384,6 +385,7 @@ function Chat() {
       <button className="close icon-button" aria-label="닫기" onClick={closeModal}><X size={18}/></button>
       {modal === 'photo' ? <><img className="large-photo" src={photo} alt="대화에서 받은 사진"/><small>AI 생성 사진</small></>
         : <><Avatar friend={friend}/><h2>{name}</h2><small>AI 친구</small>{status && <p>{status}</p>}{profile?.current_activity && <p>{profile.current_activity}</p>}
+          {!demo && modal === 'profile' && <FriendMemory room={room} name={name}/>}
           {profileError && <p role="alert">{profileError}</p>}
           {profile && <div className="profile-album">{profile.posts.map(p=><figure key={p.id}><img src={p.photo.url} alt={p.photo.alt}/><figcaption>{p.caption}</figcaption></figure>)}</div>}</>}
     </dialog>

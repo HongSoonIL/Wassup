@@ -20,7 +20,7 @@ export type Friend = {
 }
 export type History = { messages: Message[]; has_more: boolean; typing_until?: string | null; current_activity?: string | null }
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
+export async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, { cache: 'no-store', ...init })
   if (!res.ok) {
     const body = await res.json().catch(() => null)

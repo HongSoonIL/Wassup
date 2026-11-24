@@ -73,3 +73,17 @@ Django에서 실제 기록을 사용하려면 같은 frontend 디렉터리에서
 3. 다음 메시지를 보낸 뒤 탭을 닫고 발송 시각이 지난 뒤 다시 연다. 도착한 말풍선마다 고유한 메시지 ID가 하나씩 있고 새로고침 후에도 순서와 개수가 유지된다.
 
 예약은 PostgreSQL에 저장한다. 각 말풍선 저장과 그다음 발송 위치 갱신은 한 트랜잭션이며, Redis는 열린 채팅방에 화면 이벤트를 전달한다. 기본 설정에서는 발행된 글과 질문에 맞춰 샘플 답장을 선택한다. 서버에서 OpenAI를 설정하면 같은 대화 문맥으로 답장을 생성한다. [서버 설정](../README.md#피드-사진으로-대화하기)
+
+
+## 친구별 대화 기억 API
+
+인증과 CSRF는 메시지 API와 같다. 기억을 관리할 방의 친구 관계를 서버에서 확인한다.
+
+| 요청 | 동작 |
+|---|---|
+| `GET /api/rooms/{room_id}/memories/` | `enabled`, `revision`, `memories`를 반환한다. 각 항목에는 종류, 내용, 일정 날짜, 원본 메시지 ID와 본문이 있다. |
+| `PATCH /api/rooms/{room_id}/memories/` | `enabled`와 `expected_revision`을 보낸다. 끄면 해당 방의 기억을 모두 삭제한다. |
+| `PATCH /api/rooms/{room_id}/memories/{id}/` | 변경할 `text` 또는 `event_date`와 `expected_revision`을 보낸다. |
+| `DELETE /api/rooms/{room_id}/memories/{id}/` | JSON 본문에 `expected_revision`을 보내 한 항목을 삭제한다. |
+
+변경이 성공하면 갱신된 목록을 반환한다. 편집 중 다른 작업으로 목록이 바뀌면 서버가 409를 반환한다. 최신 목록을 읽고 다시 편집할 수 있다. 기억 수정·삭제·끄기 이전까지의 방 메시지는 화면에서 계속 볼 수 있다. 모델의 최근 대화 입력은 변경 이후의 메시지부터 다시 쌓아, 예전 대화에서 삭제하거나 고친 사실을 되찾는 일을 막는다.

@@ -38,7 +38,7 @@ class Command(BaseCommand):
                 close_old_connections()
                 try:
                     dispatch_due()
-                    if settings.LLM_BACKEND == 'openai' and (generation is None or generation.done()):
+                    if generation is None or generation.done():
                         previous, generation = generation, None
                         if previous:
                             previous.result()

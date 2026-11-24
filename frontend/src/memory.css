@@ -1,0 +1,18 @@
+.friend-memory { border-block: 1px solid #dfe3d7; margin: 16px 0; text-align: left; }
+.friend-memory .memory-heading { width: 100%; padding: 14px 0; display: flex; align-items: center; justify-content: space-between; background: transparent; border: 0; font: inherit; font-weight: 650; color: inherit; }
+.memory-heading[aria-expanded=true] svg { transform: rotate(180deg); }
+.memory-settings { padding-bottom: 14px; font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
+.memory-settings fieldset { padding: 0; margin: 0; border: 0; min-width: 0; }
+.memory-settings ul { padding: 0; margin: 0; list-style: none; }
+.memory-settings li { padding: 12px 0; border-top: 1px solid #e7e9e2; }
+.memory-settings li:last-child { padding-bottom: 0; }
+.memory-settings p { margin: 5px 0 9px; }
+.memory-settings button { background: #f4f6ed; color: inherit; border: 1px solid #cfd6c3; border-radius: 9px; padding: 5px 10px; margin-right: 5px; font: inherit; cursor: pointer; }
+.memory-settings .memory-enable { background: var(--color-lime); }
+.memory-actions { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.memory-settings summary { cursor: pointer; color: #58634e; }
+.memory-settings blockquote { border-left: 2px solid #bdc5b1; margin: 6px 0; padding-left: 9px; }
+.memory-buttons, .memory-settings form, .memory-confirm { margin-top: 8px; }
+.memory-settings label { display: block; margin-bottom: 6px; }
+.memory-settings input { display: block; width: 100%; border: 1px solid #cbd1c2; border-radius: 7px; padding: 6px; font: inherit; }
+.memory-actions .memory-refresh { margin-left: auto; }

@@ -25,6 +25,7 @@ urlpatterns = [
     path('', include('dashboard.urls')),
     path('admin/', admin.site.urls),
     path('api/', include('chat.urls')),
+    path('api/', include('memory.urls')),
     path('chat/from-post/<int:post_id>/', from_post),
     path('chat/<int:room_id>/', chat_page, name='chat-page'),
 ]

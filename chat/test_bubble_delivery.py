@@ -30,7 +30,8 @@ def make_room():
 
 
 def start_plan(room, texts):
-    with patch('chat.replies.world_now', return_value=NOW), patch('chat.replies.openai_reply', return_value=texts) as model:
+    result = {'bubbles': texts, 'used_memory_ids': []}
+    with patch('chat.replies.world_now', return_value=NOW), patch('chat.replies.openai_reply', return_value=result) as model:
         accept_message(room.pk, '뭐 골랐어?')
         prepare_next_reply()
         prepare_next_reply()
@@ -110,7 +111,7 @@ class BubbleDeliveryTests(TestCase):
 
             def slow_model(context):
                 dispatch_due(plan.reply_at)
-                return ['늦게 온 응답']
+                return {'bubbles': ['늦게 온 응답'], 'used_memory_ids': []}
 
             with patch('chat.replies.openai_reply', side_effect=slow_model) as model:
                 prepare_next_reply()
@@ -131,7 +132,7 @@ class BubbleDeliveryTests(TestCase):
             with patch('chat.replies.publish_room_events') as publish, self.captureOnCommitCallbacks(execute=True):
                 question = accept_message(self.room.pk, '지금 어디야?')
             self.assertEqual(publish.call_args.args[1], [{'type': 'typing.stop'}])
-            with patch('chat.replies.openai_reply', return_value=['작업실이야']) as model:
+            with patch('chat.replies.openai_reply', return_value={'bubbles': ['작업실이야'], 'used_memory_ids': []}) as model:
                 prepare_next_reply()
         turns = model.call_args.args[0]['recent_turns']
         self.assertEqual([m['text'] for m in turns], ['뭐 골랐어?', '주황으로 했어', question.text])

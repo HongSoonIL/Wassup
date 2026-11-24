@@ -8,15 +8,16 @@ from uuid import uuid4
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Exists, OuterRef, Q
+from django.db.models import Exists, F, OuterRef, Q
 
 from chat.live import publish_room_events
 from chat.models import Friendship, Message, ReplyBubble, ReplyPlan
 from chat.reply_timing import CONVERSATION_WINDOW, PHONE_OPEN_WINDOW, ReplyTiming, followup_timing, plan_reply
 from chat.serialization import iso, message_json
+from memory.services import enqueue, history_floor, memory_revision
 from world.clock import world_now
 from world.publication import published_posts
-from llm.dialogue import context_for, openai_reply, sample_reply
+from llm.dialogue import context_for, fake_reply, openai_reply, sample_reply
 
 
 BEFORE_FIRST = (ReplyPlan.Status.PLANNED, ReplyPlan.Status.READ, ReplyPlan.Status.READY)
@@ -47,6 +48,7 @@ def accept_message(room_id, text, source_post_id=None):
         source_post=post,
         source_version=post.version if post else None,
     )
+    enqueue(message)
     plan = room.reply_plans.select_for_update().filter(status__in=ACTIVE).first()
     phone_open = False
     if plan and plan.status == ReplyPlan.Status.SENDING:
@@ -58,6 +60,7 @@ def accept_message(room_id, text, source_post_id=None):
     if plan:
         plan.trigger_message = message
         plan.result, plan.model_name, plan.context_versions = [], '', {}
+        plan.used_memory_ids = []
         plan.generation_token = plan.generation_until = plan.generation_ms = None
         plan.save(
             update_fields=[
@@ -65,6 +68,7 @@ def accept_message(room_id, text, source_post_id=None):
                 'result',
                 'model_name',
                 'context_versions',
+                'used_memory_ids',
                 'generation_token',
                 'generation_until',
                 'generation_ms',
@@ -140,13 +144,15 @@ def versions_current(plan, versions, now):
 
 
 def sample_at_deadline(plan, now):
-    context = context_for(plan, now)
+    context = context_for(plan, now, include_memories=False)
     versions = {str(p['id']): p['version'] for p in context['shared_events']}
     if plan.result or not versions_current(plan, versions, now):
         # A prepared sequence lost its source, or this sample's snapshot raced an edit.
         context.update(shared_events=[], quoted_post_id=None)
         versions = {}
     plan.context_versions = versions
+    plan.memory_revision = context['memory_revision']
+    plan.used_memory_ids = []
     plan.result = sample_reply(context)
     plan.model_name = 'sample' if settings.LLM_BACKEND == 'fake' else 'fallback'
 
@@ -170,7 +176,12 @@ def deliver_bubble(plan, bubble, now, events):
 
 def dispatch_followup(plan, now, events):
     bubble = plan.bubbles.filter(status__in=[ReplyBubble.Status.QUEUED, ReplyBubble.Status.TYPING]).first()
-    if bubble.status == ReplyBubble.Status.QUEUED and now >= bubble.typing_at:
+    # An edit, deletion or opt-out fences at least this trigger. A newer
+    # extraction only adds facts and can safely leave an underway reply intact.
+    if plan.memory_revision != memory_revision(plan.room_id) and history_floor(plan.room_id) >= plan.trigger_message_id:
+        cancel_remaining(plan)
+        events.append({'type': 'typing.stop'})
+    elif bubble.status == ReplyBubble.Status.QUEUED and now >= bubble.typing_at:
         # If the worker was asleep during the pause, start a full typing interval now.
         bubble.deliver_at = now + (bubble.deliver_at - bubble.typing_at)
         bubble.typing_at, bubble.status = now, ReplyBubble.Status.TYPING
@@ -196,10 +207,12 @@ def dispatch_first(plan, now, events):
         events.extend({'type': 'message.read', 'message_id': pk, 'read_at': iso(now)} for pk in ids)
 
     if plan.reply_at <= now:
-        if not plan.result or not versions_current(plan, plan.context_versions, now):
+        if (not plan.result or plan.memory_revision != memory_revision(plan.room_id)
+                or not versions_current(plan, plan.context_versions, now)):
             sample_at_deadline(plan, now)
         plan.generation_token = plan.generation_until = None
-        plan.save(update_fields=['result', 'context_versions', 'model_name', 'generation_token', 'generation_until'])
+        plan.save(update_fields=['result', 'context_versions', 'model_name', 'memory_revision', 'used_memory_ids',
+                                 'generation_token', 'generation_until'])
         bubbles = [ReplyBubble(plan=plan, position=i, text=text) for i, text in enumerate(plan.result)]
         bubbles[0].typing_at, bubbles[0].deliver_at = plan.typing_at, plan.reply_at
         ReplyBubble.objects.bulk_create(bubbles)
@@ -217,40 +230,64 @@ def prepare_next_reply():
     """Claim one generation independently of the dispatch loop and its deadline."""
     now = world_now()
     with transaction.atomic():
-        plan = (
-            ReplyPlan.objects.select_for_update(skip_locked=True, of=('self',))
-            .select_related('room__character')
-            .filter(status__in=BEFORE_FIRST, reply_at__gt=now, reply_at__lte=now + GENERATION_LEAD, result=[])
-            .filter(Q(generation_until__isnull=True) | Q(generation_until__lte=now))
-            .order_by('reply_at', 'id')
-            .first()
+        # A room revision only increases. Include already prepared (or leased)
+        # plans from older revisions, even between the read and typing phases.
+        needs_reply = (
+            Q(result=[]) & (Q(generation_until__isnull=True) | Q(generation_until__lte=now))
+            | Q(room__memory_state__revision__gt=F('memory_revision'))
         )
-        if not plan:
+        pending = ReplyPlan.objects.filter(needs_reply, status__in=BEFORE_FIRST, reply_at__gt=now,
+                                           reply_at__lte=now + GENERATION_LEAD)
+        candidate = (pending.select_related('room').select_for_update(skip_locked=True, of=('room',))
+                     .order_by('reply_at', 'id').first())
+        if candidate is None:
             return
+        # Re-read plan eligibility after obtaining the common room lock.
+        plan = pending.filter(pk=candidate.pk).first()
+        if plan is None:
+            return
+        context = context_for(plan, now)
         token = uuid4()
         plan.generation_token, plan.generation_until = token, now + timedelta(seconds=30)
         plan.attempts += 1
-        plan.save(update_fields=['generation_token', 'generation_until', 'attempts'])
-        context = context_for(plan, now)
+        plan.result, plan.used_memory_ids, plan.context_versions = [], [], {}
+        plan.memory_revision = context['memory_revision']
+        plan.generation_ms, plan.model_name = None, ''
+        plan.save(update_fields=['generation_token', 'generation_until', 'attempts', 'result', 'used_memory_ids',
+                                 'context_versions', 'memory_revision', 'generation_ms', 'model_name'])
     started = monotonic()
     try:
-        result = openai_reply(context)
-        model_name = settings.LLM_MODEL[: ReplyPlan._meta.get_field('model_name').max_length]
-    except (HTTPException, OSError, ValueError, KeyError, TypeError) as exc:
+        if not context['recent_turns']:
+            result, model_name = {'bubbles': sample_reply(context), 'used_memory_ids': []}, 'fallback'
+        elif settings.LLM_BACKEND == 'fake':
+            result, model_name = fake_reply(context), 'sample'
+        else:
+            result = openai_reply(context)
+            model_name = settings.LLM_MODEL[: ReplyPlan._meta.get_field('model_name').max_length]
+    except (HTTPException, OSError, ValueError, KeyError, TypeError, RecursionError) as exc:
         logging.getLogger(__name__).warning(
             'Dialogue generation failed for reply plan %s (%s, HTTP %s)',
             plan.pk,
             type(exc).__name__,
             getattr(exc, 'code', None),
         )
-        result, model_name = sample_reply(context), 'fallback'
-    ReplyPlan.objects.filter(
-        pk=plan.pk, status__in=BEFORE_FIRST, generation_token=token, trigger_message_id=plan.trigger_message_id
-    ).update(
-        result=result,
-        generation_ms=round((monotonic() - started) * 1000),
-        model_name=model_name,
-        generation_token=None,
-        generation_until=None,
-        context_versions={str(p['id']): p['version'] for p in context['shared_events']},
-    )
+        result, model_name = {'bubbles': sample_reply(context), 'used_memory_ids': []}, 'fallback'
+    with transaction.atomic():
+        if not Friendship.objects.select_for_update().filter(pk=plan.room_id).first():
+            return
+        claimed = ReplyPlan.objects.filter(pk=plan.pk, status__in=BEFORE_FIRST, generation_token=token,
+                                           trigger_message_id=plan.trigger_message_id)
+        if memory_revision(plan.room_id) != plan.memory_revision or world_now() >= plan.reply_at:
+            # Nothing from the old snapshot reaches durable storage. A new
+            # generation may claim immediately, up to the original deadline.
+            claimed.update(generation_token=None, generation_until=None)
+            return
+        claimed.update(
+            result=result['bubbles'],
+            used_memory_ids=result['used_memory_ids'],
+            generation_ms=round((monotonic() - started) * 1000),
+            model_name=model_name,
+            generation_token=None,
+            generation_until=None,
+            context_versions={str(p['id']): p['version'] for p in context['shared_events']},
+        )

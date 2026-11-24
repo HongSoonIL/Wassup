@@ -94,6 +94,8 @@ class ReplyPlan(models.Model):
     generation_until = models.DateTimeField(null=True, editable=False)
     generation_ms = models.PositiveIntegerField(null=True, editable=False)
     context_versions = models.JSONField(default=dict, blank=True)
+    memory_revision = models.PositiveBigIntegerField(default=0, editable=False)
+    used_memory_ids = models.JSONField(default=list, blank=True, editable=False)
     model_name = models.CharField('사용 모델', max_length=50, blank=True)
     attempts = models.PositiveSmallIntegerField('시도 수', default=0)
     created_at = models.DateTimeField(auto_now_add=True)

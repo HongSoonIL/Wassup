@@ -117,7 +117,8 @@ class QuotedConversationTests(TestCase):
                     'content': [
                         {
                             'type': 'output_text',
-                            'text': json.dumps({'bubbles': ['주황이 좋더라', '같이 뽑아 보길 잘했어']}),
+                            'text': json.dumps({'bubbles': ['주황이 좋더라', '같이 뽑아 보길 잘했어'],
+                                                'used_memory_ids': []}),
                         }
                     ],
                 }
@@ -161,7 +162,9 @@ class QuotedConversationTests(TestCase):
         accept_message(self.room.pk, '무슨 색으로 골랐어?', self.post.pk)
         result = {
             'status': 'completed',
-            'output': [{'type': 'message', 'content': [{'type': 'output_text', 'text': '{"bubbles":["주황"]}'}]}],
+            'output': [{'type': 'message', 'content': [
+                {'type': 'output_text', 'text': '{"bubbles":["주황"],"used_memory_ids":[]}'},
+            ]}],
         }
         with patch('llm.dialogue.urlopen', return_value=io.BytesIO(json.dumps(result).encode())) as transport:
             prepare_next_reply()
@@ -176,7 +179,9 @@ class QuotedConversationTests(TestCase):
 
     def test_revocation_between_bubbles_cancels_only_unsent_text(self):
         self.quote()
-        with patch('chat.replies.openai_reply', return_value=['처음 답장', '회수한 사진의 세부 내용']):
+        with patch('chat.replies.openai_reply', return_value={
+            'bubbles': ['처음 답장', '회수한 사진의 세부 내용'], 'used_memory_ids': [],
+        }):
             prepare_next_reply()
         plan = self.room.reply_plans.get()
         dispatch_due(plan.reply_at)
@@ -236,7 +241,7 @@ class QuotedConversationTests(TestCase):
             prepare_next_reply()
             model.assert_not_called()
         with patch('chat.replies.world_now', return_value=plan.reply_at - timedelta(seconds=30)), \
-                patch('chat.replies.openai_reply', return_value=['점심 먹으러 왔어']) as model:
+                patch('chat.replies.openai_reply', return_value={'bubbles': ['점심 먹으러 왔어'], 'used_memory_ids': []}) as model:
             prepare_next_reply()
             self.assertEqual(model.call_args.args[0]['current_activity']['activity'], '점심시간')
         plan.refresh_from_db()
@@ -248,7 +253,7 @@ class QuotedConversationTests(TestCase):
 
         def new_turn(context):
             accept_message(self.room.pk, '근데 종이로도 봤어?')
-            return ['이전 질문에 만든 답장']
+            return {'bubbles': ['이전 질문에 만든 답장'], 'used_memory_ids': []}
 
         with patch('chat.replies.openai_reply', side_effect=new_turn):
             prepare_next_reply()
@@ -256,7 +261,9 @@ class QuotedConversationTests(TestCase):
         self.assertEqual(plan.reply_at, first.reply_at)
         self.assertEqual(plan.result, [])
         self.assertEqual(context_for(plan, timezone.now())['quoted_post_id'], self.post.pk)
-        with patch('chat.replies.openai_reply', return_value=['회수할 사진을 보고 만든 답장']):
+        with patch('chat.replies.openai_reply', return_value={
+            'bubbles': ['회수할 사진을 보고 만든 답장'], 'used_memory_ids': [],
+        }):
             prepare_next_reply()
         self.post.state = 'skipped'
         self.post.save(update_fields=['state'])
@@ -271,7 +278,7 @@ class QuotedConversationTests(TestCase):
         result = {
             'status': 'completed',
             'output': [
-                {'type': 'message', 'content': [{'type': 'output_text', 'text': '{"bubbles":[""]}'}]}
+                {'type': 'message', 'content': [{'type': 'output_text', 'text': '{"bubbles":[""],"used_memory_ids":[]}'}]}
             ],
         }
         with patch('llm.dialogue.urlopen', return_value=io.BytesIO(json.dumps(result).encode())):
