@@ -149,7 +149,7 @@ export default function FriendsPage({ page, characterId }: { page: string; chara
   return <div className="people">
     <div className="user-layout">
       <UserNav page={page} unreadCount={overview.unreadCount}/>
-      <main className={'people-main people-'+page}>{page === 'me' ? <MePage friendCount={overview.data?.friends.length}/> : page === 'discover' ? <Discover/> : page === 'profile'
+      <main className={'people-main people-'+page}>{page === 'me' ? <MePage overview={overview}/> : page === 'discover' ? <Discover/> : page === 'profile'
         ? <PersonProfile key={characterId} characterId={characterId}/> : <Home overview={overview}/>}</main>
     </div>
   </div>

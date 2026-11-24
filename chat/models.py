@@ -103,6 +103,9 @@ class ReplyPlan(models.Model):
     generation_ms = models.PositiveIntegerField(null=True, editable=False)
     context_versions = models.JSONField(default=dict, blank=True)
     memory_revision = models.PositiveBigIntegerField(default=0, editable=False)
+    preference_revision = models.PositiveBigIntegerField(default=0, editable=False)
+    # A preference update can grant one fixed retry window past the original delivery time.
+    preference_retry_until = models.DateTimeField(null=True, editable=False)
     used_memory_ids = models.JSONField(default=list, blank=True, editable=False)
     model_name = models.CharField('사용 모델', max_length=50, blank=True)
     attempts = models.PositiveSmallIntegerField('시도 수', default=0)

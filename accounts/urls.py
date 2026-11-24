@@ -11,6 +11,7 @@ urlpatterns = [
     path('home/', views.friends_page, {'page': 'home'}, name='home'),
     path('messages/', views.friends_page, {'page': 'messages'}, name='messages'),
     path('me/', views.my_profile, name='my-profile'),
+    path('api/me/preferences/', views.my_preferences, name='my-preferences'),
     path('discover/', views.friends_page, {'page': 'discover'}, name='discover'),
     path('people/<int:character_id>/', views.friends_page, {'page': 'profile'}, name='friend-profile'),
 ]

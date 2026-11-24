@@ -1,5 +1,36 @@
+from unicodedata import category
+
 from django.contrib.auth.models import AbstractUser
+from django.core.exceptions import ValidationError
 from django.db import models
+
+
+PREFERENCE_TAGS = frozenset({'커피', '음악', '산책', '영화', '음식', '운동'})
+
+
+def validate_shared_preferences(items):
+    if not isinstance(items, list) or len(items) > 5:
+        raise ValidationError('취향은 최대 5개까지 보낼 수 있어요.')
+
+    seen_tags = set()
+    for item in items:
+        if not isinstance(item, dict) or item.keys() != {'tag', 'text'}:
+            raise ValidationError('각 취향에 tag와 text를 보내 주세요.')
+        tag, text = item['tag'], item['text']
+        if not isinstance(tag, str) or not isinstance(text, str):
+            raise ValidationError('tag와 text는 문자열로 보내 주세요.')
+        if tag and tag not in PREFERENCE_TAGS:
+            raise ValidationError('목록에 있는 태그를 선택해 주세요.')
+        if tag in seen_tags:
+            raise ValidationError('같은 태그는 한 번만 사용할 수 있어요.')
+        if tag:
+            seen_tags.add(tag)
+        if not tag and not text.strip():
+            raise ValidationError('태그를 선택하거나 취향을 적어 주세요.')
+        if len(text) > 80 or (text and text.splitlines() != [text]):
+            raise ValidationError('취향은 한 줄로 80자까지 적을 수 있어요.')
+        if '\x00' in text or any(category(char) == 'Cs' for char in text):
+            raise ValidationError('취향에 저장할 수 없는 문자가 있어요.')
 
 
 class User(AbstractUser):
@@ -11,6 +42,10 @@ class User(AbstractUser):
 
     nickname = models.CharField('닉네임', max_length=20, blank=True)
     bio = models.CharField('한 줄 소개', max_length=80, blank=True, default='', db_default='')
+    shared_preferences = models.JSONField(
+        default=list, db_default=[], blank=True, editable=False, validators=[validate_shared_preferences],
+    )
+    preference_revision = models.PositiveBigIntegerField(default=0, db_default=0, editable=False)
     # 만 18세 이상만 가입한다 (설계서 2.3절). 나이 확인은 가입 API(부록 B)에서 한다.
     birth_year = models.PositiveSmallIntegerField('생년', null=True, blank=True)
     agreed_at = models.DateTimeField('대화 저장·AI 고지 동의 시각', null=True, blank=True)

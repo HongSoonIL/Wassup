@@ -77,7 +77,7 @@ export async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return (await apiResponse(url, init)).json()
 }
 
-function csrfToken() {
+export function csrfToken() {
   return document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/)?.[1] || ''
 }
 

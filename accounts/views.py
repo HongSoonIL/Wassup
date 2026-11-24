@@ -1,8 +1,10 @@
+import json
 from urllib.parse import urlsplit
 
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import LoginView
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.http import HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
@@ -13,8 +15,10 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_GET, require_http_methods
 
+from chat.views import error, json_response, login_required_json
+
 from .forms import ProfileForm, SignupForm
-from .models import User
+from .models import User, validate_shared_preferences
 
 
 def safe_next(request):
@@ -71,6 +75,49 @@ def friends_page(request, page, character_id=None):
     return render(request, 'accounts/friends.html', {'page': page, 'character_id': character_id})
 
 
+def _preference_snapshot(user):
+    return {'items': user.shared_preferences, 'revision': user.preference_revision}
+
+
+@require_http_methods(['GET', 'PUT'])
+@never_cache
+@ensure_csrf_cookie
+@login_required_json
+def my_preferences(request):
+    if request.method == 'GET':
+        return json_response(_preference_snapshot(request.user))
+
+    try:
+        body = json.loads(request.body)
+    except (ValueError, RecursionError):
+        return error(400, 'JSON 형식이 아니에요.')
+    if not isinstance(body, dict) or body.keys() != {'items', 'expected_revision'}:
+        return error(400, 'items와 expected_revision을 보내 주세요.')
+    revision = body['expected_revision']
+    if type(revision) is not int or not 0 <= revision < 2**63:
+        return error(400, 'expected_revision은 유효한 0 이상의 정수여야 해요.')
+    items = body['items']
+    try:
+        validate_shared_preferences(items)
+    except ValidationError as exc:
+        return error(400, exc.messages[0])
+
+    with transaction.atomic():
+        user = User.objects.select_for_update(no_key=True).only(
+            'shared_preferences', 'preference_revision',
+        ).get(pk=request.user.pk)
+        if revision != user.preference_revision:
+            return json_response({
+                **_preference_snapshot(user),
+                'detail': '취향이 변경됐어요. 최신 내용을 확인한 뒤 다시 시도해 주세요.',
+            }, status=409)
+        if items != user.shared_preferences:
+            user.shared_preferences = items
+            user.preference_revision += 1
+            user.save(update_fields=['shared_preferences', 'preference_revision'])
+        return json_response(_preference_snapshot(user))
+
+
 @never_cache
 @login_required
 @ensure_csrf_cookie
@@ -86,10 +133,11 @@ def my_profile(request):
             form.save(commit=False).save(update_fields=ProfileForm.Meta.fields)
             return redirect('my-profile')
     profile = {
-        'section': section if section in ('edit', 'settings') else 'overview',
+        'section': section if section in ('edit', 'settings', 'preferences', 'memories') else 'overview',
         'username': user.username,
         'nickname': form['nickname'].value() or '',
         'bio': form['bio'].value() or '',
         'errors': {field: list(errors) for field, errors in form.errors.items()},
+        'preferences': _preference_snapshot(user),
     }
     return render(request, 'accounts/friends.html', {'page': 'me', 'my_profile': profile})

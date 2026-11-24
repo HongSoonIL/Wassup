@@ -1,9 +1,12 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from threading import Barrier
 from unittest.mock import patch
 from urllib.parse import quote
 
 from django.contrib.auth import SESSION_KEY
-from django.test import Client, TestCase, override_settings
+from django.db import connections
+from django.test import Client, TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 
 from chat.models import Friendship
@@ -182,3 +185,139 @@ class AccountEntryTests(TestCase):
             self.assertIn('bio', response.context['my_profile']['errors'])
             user.refresh_from_db()
             self.assertEqual(user.bio, '토요일엔 산책')
+
+
+PREFERENCES_URL = '/api/me/preferences/'
+JSON = 'application/json'
+
+
+class SharedPreferencesTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.owner = User.objects.create_user('owner', nickname='민지')
+        cls.other = User.objects.create_user(
+            'other', shared_preferences=[{'tag': '영화', 'text': '극장에서 보기'}], preference_revision=7,
+        )
+
+    def setUp(self):
+        self.client.force_login(self.owner)
+
+    def put(self, items, revision=0):
+        return self.client.put(PREFERENCES_URL, {'items': items, 'expected_revision': revision}, content_type=JSON)
+
+    def test_defaults_profiles_and_updates_use_only_the_signed_in_account(self):
+        defaults = {'items': [], 'revision': 0}
+        self.assertEqual(self.client.get(PREFERENCES_URL, {'user_id': self.other.pk}).json(), defaults)
+        for section in ('preferences', 'memories'):
+            profile = self.client.get('/me/', {'section': section}).context['my_profile']
+            self.assertEqual(profile['section'], section)
+            self.assertEqual(profile['preferences'], defaults)
+        self.assertEqual(self.client.get('/me/', {'section': 'unknown'}).context['my_profile']['section'], 'overview')
+
+        items = [{'tag': '커피', 'text': ''}, {'tag': '', 'text': '책 읽기'}]
+        response = self.client.put(
+            f'{PREFERENCES_URL}?user_id={self.other.pk}', {'items': items, 'expected_revision': 0}, content_type=JSON,
+        )
+        self.assertEqual(response.status_code, 200)
+        snapshot = {'items': items, 'revision': 1}
+        self.assertEqual(response.json(), snapshot)
+        profile = self.client.get('/me/').context['my_profile']
+        self.assertEqual(profile['preferences'], snapshot)
+        self.assertEqual(profile['nickname'], '민지')
+
+        self.client.force_login(self.other)
+        self.assertEqual(self.client.get(PREFERENCES_URL).json(), {
+            'items': [{'tag': '영화', 'text': '극장에서 보기'}], 'revision': 7,
+        })
+
+    def test_writes_require_csrf_and_the_endpoint_requires_a_session(self):
+        payload = {'items': [{'tag': '산책', 'text': ''}], 'expected_revision': 0}
+        guest = Client()
+        for response in (guest.get(PREFERENCES_URL), guest.put(PREFERENCES_URL, payload, content_type=JSON)):
+            self.assertEqual(response.status_code, 401)
+            self.assertIn('detail', response.json())
+
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.owner)
+        response = client.get(PREFERENCES_URL)
+        self.assertIn('csrftoken', response.cookies)
+        self.assertEqual(client.put(PREFERENCES_URL, payload, content_type=JSON).status_code, 403)
+        response = client.put(
+            PREFERENCES_URL, payload, content_type=JSON, HTTP_X_CSRFTOKEN=client.cookies['csrftoken'].value,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {'items': payload['items'], 'revision': 1})
+
+    def test_validates_the_entire_replacement(self):
+        valid = [
+            {'tag': '커피', 'text': '차' * 80},
+            {'tag': '음악', 'text': ''},
+            {'tag': '산책', 'text': '저녁 산책'},
+            {'tag': '', 'text': '책 읽기'},
+            {'tag': '', 'text': '퍼즐 🧩'},
+        ]
+        self.assertEqual(self.put(valid).json(), {'items': valid, 'revision': 1})
+        for item in [
+            '커피', {'tag': '커피'}, {'tag': '커피', 'text': '', 'id': 1}, {'tag': 1, 'text': ''},
+            {'tag': '', 'text': None}, {'tag': '', 'text': ''}, {'tag': '', 'text': '  '},
+            {'tag': '독서', 'text': ''}, {'tag': '커피', 'text': '다른 내용'}, {'tag': '운동', 'text': '가' * 81},
+            {'tag': '영화', 'text': '첫 줄\n둘째 줄'}, {'tag': '음식', 'text': '치킨\n'},
+            {'tag': '음식', 'text': '치킨\u2028'}, {'tag': '', 'text': '치킨\x00'}, {'tag': '', 'text': '\ud800'},
+        ]:
+            with self.subTest(item=item):
+                response = self.put([*valid[:1], item], revision=1)
+                self.assertEqual(response.status_code, 400)
+                self.assertIn('detail', response.json())
+        for payload in [
+            '{', '[]', '{}', {'items': []}, {'expected_revision': 1}, {'items': [], 'expected_revision': True},
+            {'items': [], 'expected_revision': -1}, {'items': [], 'expected_revision': 1.0},
+            {'items': [], 'expected_revision': '1'}, {'items': [], 'expected_revision': 2**63},
+            {'items': [], 'expected_revision': 1, 'user_id': self.other.pk},
+            {'items': {}, 'expected_revision': 1},
+            {'items': [*valid, {'tag': '운동', 'text': ''}], 'expected_revision': 1},
+        ]:
+            with self.subTest(payload=payload):
+                response = self.client.put(PREFERENCES_URL, payload, content_type=JSON)
+                self.assertEqual(response.status_code, 400)
+                self.assertIn('detail', response.json())
+        self.assertEqual(self.client.get(PREFERENCES_URL).json(), {'items': valid, 'revision': 1})
+
+    def test_conflicts_return_current_snapshot_and_no_op_preserves_revision(self):
+        self.assertEqual(self.put([]).json(), {'items': [], 'revision': 0})
+        items = [{'tag': '운동', 'text': '등산'}]
+        snapshot = {'items': items, 'revision': 1}
+        self.assertEqual(self.put(items).json(), snapshot)
+        for replacement in ([], items):
+            stale = self.put(replacement)
+            self.assertEqual(stale.status_code, 409)
+            self.assertTrue(stale.json().get('detail'))
+            self.assertEqual({key: stale.json()[key] for key in snapshot}, snapshot)
+        self.assertEqual(self.put(items, revision=1).json(), snapshot)
+        self.assertEqual(self.put([], revision=1).json(), {'items': [], 'revision': 2})
+
+
+class SharedPreferencesRaceTests(TransactionTestCase):
+    def test_only_one_concurrent_edit_can_commit_the_same_revision(self):
+        owner = User.objects.create_user('owner')
+        gate = Barrier(2, timeout=5)
+
+        def change(tag):
+            try:
+                client = Client()
+                client.force_login(owner)
+                gate.wait()
+                response = client.put(
+                    PREFERENCES_URL, {'items': [{'tag': tag, 'text': ''}], 'expected_revision': 0}, content_type=JSON,
+                )
+                return response.status_code, response.json()
+            finally:
+                connections.close_all()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = dict(pool.map(change, ['음식', '음악']))
+        self.assertEqual(set(results), {200, 409})
+        self.assertEqual(results[200], {'items': results[409]['items'], 'revision': 1})
+        self.assertEqual(results[409]['revision'], 1)
+        owner.refresh_from_db()
+        self.assertEqual(owner.shared_preferences, results[200]['items'])
+        self.assertEqual(owner.preference_revision, 1)

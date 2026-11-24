@@ -7,6 +7,7 @@ from time import monotonic
 from uuid import uuid4
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Exists, F, OuterRef, Q
 
@@ -26,6 +27,15 @@ from world.publication import published_posts
 BEFORE_FIRST = (ReplyPlan.Status.PLANNED, ReplyPlan.Status.READ, ReplyPlan.Status.READY)
 ACTIVE = (*BEFORE_FIRST, ReplyPlan.Status.SENDING)
 GENERATION_LEAD = timedelta(minutes=2)
+# Leave time for a superseded request to finish and one new generation to run.
+PREFERENCE_RETRY_GRACE = timedelta(seconds=30)
+
+
+def lock_preference_revision(user_id):
+    # Dispatch and generation commit hold the room first. Preference edits only
+    # lock the account, and proactive claims skip rooms that are already locked.
+    return (get_user_model().objects.select_for_update(no_key=True)
+            .values_list('preference_revision', flat=True).get(pk=user_id))
 
 
 def cancel_remaining(plan):
@@ -95,6 +105,7 @@ def accept_message(room_id, text, source_post_id=None):
             read_at=timing.read_at,
             typing_at=timing.typing_at,
             reply_at=timing.reply_at,
+            preference_revision=room.user.preference_revision,
         )
     return message
 
@@ -105,13 +116,19 @@ def dispatch_due(now=None, limit=100):
         Q(status=ReplyBubble.Status.QUEUED, typing_at__lte=cutoff)
         | Q(status=ReplyBubble.Status.TYPING, deliver_at__lte=cutoff)
     )
+    stale_preference = Q(preference_revision__lt=F('room__user__preference_revision'))
+    waiting_for_retry = (
+        Q(status=ReplyPlan.Status.READ, reply_at__lte=cutoff, preference_retry_until__gt=cutoff)
+        & (Q(result=[]) | stale_preference)
+    )
     due = (
         ReplyPlan.objects.filter(
             Q(status=ReplyPlan.Status.PLANNED, read_at__lte=cutoff)
-            | Q(status=ReplyPlan.Status.READ, typing_at__lte=cutoff)
-            | Q(status=ReplyPlan.Status.READY, reply_at__lte=cutoff)
-            | (Q(status=ReplyPlan.Status.SENDING) & Exists(due_bubble))
+            | (Q(status=ReplyPlan.Status.READ, typing_at__lte=cutoff) & (Q(reply_at__lte=cutoff) | ~stale_preference))
+            | (Q(status=ReplyPlan.Status.READY) & (Q(reply_at__lte=cutoff) | stale_preference))
+            | (Q(status=ReplyPlan.Status.SENDING) & (Exists(due_bubble) | stale_preference))
         )
+        .exclude(waiting_for_retry)
         .order_by('reply_at')
         .values_list('id', 'room_id')[:limit]
     )
@@ -196,6 +213,7 @@ def sample_at_deadline(plan, now):
         versions = {}
     plan.context_versions = versions
     plan.memory_revision = context['memory_revision']
+    plan.preference_revision = context['preference_revision']
     plan.used_memory_ids = []
     plan.result = sample_reply(context)
     plan.attachment = None
@@ -223,13 +241,16 @@ def deliver_bubble(plan, bubble, now, events, post):
 
 
 def dispatch_followup(plan, now, events):
-    bubble = plan.bubbles.filter(status__in=[ReplyBubble.Status.QUEUED, ReplyBubble.Status.TYPING]).first()
+    preference_revision = lock_preference_revision(plan.room.user_id)
     # An edit, deletion or opt-out fences at least this trigger. A newer
     # extraction only adds facts and can safely leave an underway reply intact.
-    if plan.memory_revision != memory_revision(plan.room_id) and history_floor(plan.room_id) >= plan.trigger_message_id:
+    if (plan.preference_revision != preference_revision
+            or (plan.memory_revision != memory_revision(plan.room_id)
+                and history_floor(plan.room_id) >= plan.trigger_message_id)):
         cancel_remaining(plan)
         events.append({'type': 'typing.stop'})
         return
+    bubble = plan.bubbles.filter(status__in=[ReplyBubble.Status.QUEUED, ReplyBubble.Status.TYPING]).first()
     current, post = validate_reply_sources(plan, now)
     if not current:
         cancel_remaining(plan)
@@ -256,16 +277,30 @@ def dispatch_first(plan, now, events):
         events.extend({'type': 'message.read', 'message_id': pk, 'read_at': iso(now)} for pk in ids)
 
     if plan.reply_at <= now:
+        preference_current = plan.preference_revision == lock_preference_revision(plan.room.user_id)
+        if not preference_current:
+            plan.preference_retry_until = plan.reply_at + PREFERENCE_RETRY_GRACE
+        if (plan.preference_retry_until and now < plan.preference_retry_until
+                and (not preference_current or not plan.result)):
+            # Keep the original delivery as the anchor even if preferences
+            # change again. Stop the expired first typing phase while we retry.
+            if plan.status == ReplyPlan.Status.READY:
+                events.append({'type': 'typing.stop'})
+            plan.status = ReplyPlan.Status.READ
+            plan.save(update_fields=['status', 'preference_retry_until', 'updated_at'])
+            return
         current, post = (
             validate_reply_sources(plan, now)
-            if plan.result and plan.memory_revision == memory_revision(plan.room_id)
+            if plan.result and preference_current and plan.memory_revision == memory_revision(plan.room_id)
             else (False, None)
         )
         if not current:
             sample_at_deadline(plan, now)
         plan.generation_token = plan.generation_until = None
+        plan.preference_retry_until = None
         plan.save(update_fields=['result', 'attachment', 'context_versions', 'model_name', 'memory_revision',
-                                 'used_memory_ids', 'generation_token', 'generation_until'])
+                                 'preference_revision', 'preference_retry_until', 'used_memory_ids',
+                                 'generation_token', 'generation_until'])
         bubbles = [ReplyBubble(plan=plan, position=i, text=text) for i, text in enumerate(plan.result)]
         if post:
             selected = bubbles[plan.attachment['bubble_index']]
@@ -273,10 +308,16 @@ def dispatch_first(plan, now, events):
         bubbles[0].typing_at, bubbles[0].deliver_at = plan.typing_at, plan.reply_at
         ReplyBubble.objects.bulk_create(bubbles)
         deliver_bubble(plan, bubbles[0], now, events, post)
-    elif plan.typing_at <= now and plan.status != ReplyPlan.Status.READY:
-        plan.status = ReplyPlan.Status.READY
-        plan.save(update_fields=['status', 'updated_at'])
-        events.append({'type': 'typing.start', 'expires_at': iso(plan.reply_at, timespec='milliseconds')})
+    elif plan.typing_at <= now:
+        preference_current = plan.preference_revision == lock_preference_revision(plan.room.user_id)
+        status = ReplyPlan.Status.READY if preference_current else ReplyPlan.Status.READ
+        if plan.status != status:
+            if preference_current:
+                events.append({'type': 'typing.start', 'expires_at': iso(plan.reply_at, timespec='milliseconds')})
+            elif plan.status == ReplyPlan.Status.READY:
+                events.append({'type': 'typing.stop'})
+            plan.status = status
+            plan.save(update_fields=['status', 'updated_at'])
     elif plan.status == ReplyPlan.Status.PLANNED:
         plan.status = ReplyPlan.Status.READ
         plan.save(update_fields=['status', 'updated_at'])
@@ -301,13 +342,16 @@ def prepare_next_reply():
     """Return whether a generation was claimed, independently of its delivery deadline."""
     now = world_now()
     with transaction.atomic():
-        # A room revision only increases. Include already prepared (or leased)
-        # plans from older revisions, even between the read and typing phases.
+        # A revision can supersede a prepared result or an outstanding lease.
+        stale_preference = Q(preference_revision__lt=F('room__user__preference_revision'))
         needs_reply = (
             Q(result=[]) & (Q(generation_until__isnull=True) | Q(generation_until__lte=now))
             | Q(room__memory_state__revision__gt=F('memory_revision'))
+            | stale_preference
         )
-        pending = ReplyPlan.objects.filter(needs_reply, status__in=BEFORE_FIRST, reply_at__gt=now,
+        in_time = (Q(reply_at__gt=now) | Q(preference_retry_until__gt=now)
+                   | (stale_preference & Q(reply_at__gt=now - PREFERENCE_RETRY_GRACE)))
+        pending = ReplyPlan.objects.filter(needs_reply, in_time, status__in=BEFORE_FIRST,
                                            reply_at__lte=now + GENERATION_LEAD)
         candidate = (pending.select_related('room').select_for_update(skip_locked=True, of=('room',))
                      .order_by('reply_at', 'id').first())
@@ -318,6 +362,9 @@ def prepare_next_reply():
         if plan is None:
             return False
         context = context_for(plan, now)
+        if plan.preference_revision != context['preference_revision']:
+            plan.preference_retry_until = plan.reply_at + PREFERENCE_RETRY_GRACE
+        plan.preference_revision = context['preference_revision']
         token = uuid4()
         plan.generation_token, plan.generation_until = token, now + timedelta(seconds=30)
         plan.attempts += 1
@@ -326,7 +373,8 @@ def prepare_next_reply():
         plan.memory_revision = context['memory_revision']
         plan.generation_ms, plan.model_name = None, ''
         plan.save(update_fields=['generation_token', 'generation_until', 'attempts', 'result', 'attachment',
-                                 'used_memory_ids', 'context_versions', 'memory_revision', 'generation_ms', 'model_name'])
+                                 'used_memory_ids', 'context_versions', 'memory_revision', 'preference_revision',
+                                 'preference_retry_until', 'generation_ms', 'model_name'])
     started = monotonic()
     attachment = None
     try:
@@ -347,13 +395,19 @@ def prepare_next_reply():
         )
         result, model_name = {'bubbles': sample_reply(context), 'used_memory_ids': []}, 'fallback'
     with transaction.atomic():
-        if not Friendship.objects.select_for_update().filter(pk=plan.room_id).first():
+        room = Friendship.objects.select_for_update().filter(pk=plan.room_id).first()
+        if room is None:
             return True
         claimed = ReplyPlan.objects.filter(pk=plan.pk, status__in=BEFORE_FIRST, generation_token=token,
                                            trigger_message_id=plan.trigger_message_id)
-        if memory_revision(plan.room_id) != plan.memory_revision or world_now() >= plan.reply_at:
-            # Nothing from the old snapshot reaches durable storage. A new
-            # generation may claim immediately, up to the original deadline.
+        if not claimed.exists():
+            return True
+        preference_revision = lock_preference_revision(room.user_id)
+        deadline = plan.preference_retry_until or plan.reply_at
+        if (preference_revision != plan.preference_revision or memory_revision(plan.room_id) != plan.memory_revision
+                or world_now() >= min(deadline, plan.generation_until)):
+            # Nothing from the old snapshot reaches durable storage. A fresh
+            # generation may claim immediately while its delivery window is open.
             claimed.update(generation_token=None, generation_until=None)
             return True
         claimed.update(

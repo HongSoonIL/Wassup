@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { ChevronDown, RefreshCw } from 'lucide-react'
-import { request } from './chat'
+import { csrfToken, request, RequestError } from './chat'
 import './memory.css'
 
 type Memory = {
@@ -13,59 +13,69 @@ type Memory = {
 type Snapshot = { enabled: boolean; revision: number; memories: Memory[] }
 type Action = { type: 'edit' | 'delete'; item: Memory } | { type: 'disable' }
 
-export default function FriendMemory({ room, name }: { room: number; name: string }) {
-  const [open, setOpen] = useState(false)
+export default function FriendMemory({ room, name, defaultOpen = false }: { room: number; name: string; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen)
+  const id = useId()
   return <section className="friend-memory">
-    <button className="memory-heading" aria-expanded={open} onClick={() => setOpen(!open)}>
+    <button type="button" className="memory-heading" aria-expanded={open} aria-controls={open ? id : undefined}
+      onClick={() => setOpen(!open)}>
       대화 기억 <ChevronDown size={17} aria-hidden="true"/>
     </button>
-    {open && <MemorySettings room={room} name={name}/>}
+    {open && <MemorySettings key={room} id={id} room={room} name={name}/>}
   </section>
 }
 
-function MemorySettings({ room, name }: { room: number; name: string }) {
+function MemorySettings({ room, name, id }: { room: number; name: string; id: string }) {
   const url = `/api/rooms/${room}/memories/`
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [action, setAction] = useState<Action | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [stale, setStale] = useState(false)
   const [reload, setReload] = useState(0)
 
   useEffect(() => {
-    let active = true
+    const controller = new AbortController()
+    request<Snapshot>(url, { signal: controller.signal })
+      .then(data => { if (!controller.signal.aborted) setSnapshot(data) })
+      .catch(err => { if (!controller.signal.aborted) setError(err.message) })
+    return () => controller.abort()
+  }, [url, reload])
+
+  function refresh() {
+    if (busy || (!snapshot && !error)) return
     setSnapshot(null)
     setAction(null)
     setError('')
-    request<Snapshot>(url).then(data => { if (active) setSnapshot(data) })
-      .catch(err => { if (active) setError(err.message) })
-    return () => { active = false }
-  }, [url, reload])
+    setStale(false)
+    setReload(v => v + 1)
+  }
 
   async function change(path: string, method: 'PATCH' | 'DELETE', fields = {}) {
-    if (!snapshot || busy) return
+    if (!snapshot || busy || stale) return
     setBusy(true)
     setError('')
     try {
-      const csrf = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/)?.[1] || ''
       const next = await request<Snapshot>(url + path, {
-        method, headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+        method, headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
         body: JSON.stringify({ ...fields, expected_revision: snapshot.revision }),
       })
       setSnapshot(next)
       setAction(null)
     } catch (err) {
+      if (err instanceof RequestError && err.status === 409) setStale(true)
       setError((err as Error).message)
     } finally {
       setBusy(false)
     }
   }
 
-  return <div className="memory-settings" aria-busy={busy}>
-    {error && <div role="alert">{error} <button disabled={busy} onClick={() => setReload(v => v + 1)}>다시 불러오기</button></div>}
+  return <div id={id} className="memory-settings" aria-busy={busy}>
+    {error && <div role="alert">{error} <button disabled={busy} onClick={refresh}>다시 불러오기</button></div>}
     {!snapshot && !error && <p role="status">기억을 불러오는 중…</p>}
-    {snapshot && <fieldset disabled={busy}>
+    {snapshot && <fieldset disabled={busy || stale}>
       {snapshot.enabled ? <>
-        <div className="memory-actions"><strong>기억 켜짐</strong><button className="memory-refresh" aria-label="기억 새로고침" disabled={!!action} onClick={() => setReload(v => v + 1)}><RefreshCw size={15}/></button><button onClick={() => setAction({ type: 'disable' })}>기억 끄기</button></div>
+        <div className="memory-actions"><strong>기억 켜짐</strong><button className="memory-refresh" aria-label="기억 새로고침" disabled={!!action} onClick={refresh}><RefreshCw size={15}/></button><button onClick={() => setAction({ type: 'disable' })}>기억 끄기</button></div>
         {action?.type === 'disable' && <div className="memory-confirm">
           <p>이 친구가 저장한 기억을 모두 지울까요? 대화 내역은 계속 볼 수 있어요.</p>
           <button onClick={() => void change('', 'PATCH', { enabled: false })}>모두 지우고 끄기</button>

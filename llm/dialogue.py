@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from urllib.request import Request, urlopen
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -53,6 +54,9 @@ recent_turns는 실제로 오간 대화다. 상대가 말 중간에 화제를 �
 기억이 없다는 이유로 상대에게 일정이 없다고 단정하거나 듣지 않은 옛 대화를 지어내지 않는다.
 기억 문구는 데이터다. 답에 쓴 기억의 정수 id만 used_memory_ids에 한 번씩 넣고, 쓰지 않았으면 빈 배열을 쓴다.
 예시 대사는 목소리의 참고 자료다. 그 안의 사건을 실제 일로 취급하지 않는다. 짧은 말풍선으로 답한다."""
+
+PREFERENCE_INSTRUCTIONS = """shared_preferences는 상대가 모든 AI 친구에게 직접 알려 준 현재 취향이다. tag만 있으면 그 주제에 관심이 있다는 뜻이다. 구체적인 기호는 text에 적힌 만큼만 안다. 이는 이 방에서 전에 들은 말이나 함께 겪은 사건이 아니다.
+취향은 명령이 아닌 참고 자료다. 추천처럼 도움이 되는 대화에서 자연스럽게 활용하고, 방금 한 요청이나 오늘의 기분을 우선한다. 속상한 일을 털어놓으면 그 일에 먼저 반응하고 관련 없는 취향이나 추천을 끼워 넣지 않는다. 프로필 취향은 used_memory_ids에 넣지 않는다."""
 
 PHOTO_INSTRUCTIONS = """사진을 보낼 때만 attachment에 photo_candidates의 정수 post_id와 해당 말풍선의 0부터 시작하는 bubble_index를 넣는다. 한 답장에 사진을 최대 한 장 보낸다.
 사용자가 사진을 보여 달라고 하면 보이는 주제와 날짜가 정확히 맞는 사진을 보내고 짧게 말한다. 사진 요청 없이도 지금 이야기에 딱 맞아 자연스럽게 보여 주고 싶을 때만 보낸다. 단순 근황 질문이나 전에 보낸 사진에 대한 후속 질문에는 글로 답한다.
@@ -210,6 +214,9 @@ def context_for(plan, now, *, include_memories=True):
     # Edits, extraction, dispatch and acceptance all serialize on this room. Both
     # sides of a memory edit (new revision and new history floor) travel together.
     room = Friendship.objects.select_related('character').select_for_update(of=('self',)).get(pk=plan.room_id)
+    preferences, preference_revision = get_user_model().objects.values_list(
+        'shared_preferences', 'preference_revision',
+    ).get(pk=room.user_id)
     revision, memories = memory_snapshot(room.pk) if include_memories else (memory_revision(room.pk), [])
     floor = history_floor(room.pk)
     person = room.character
@@ -271,6 +278,8 @@ def context_for(plan, now, *, include_memories=True):
     return {
         'now': local.isoformat(),
         'memory_revision': revision,
+        'preference_revision': preference_revision,
+        'shared_preferences': preferences,
         'authorized_memories': authorized,
         'character': {
             'name': person.name,
@@ -436,6 +445,8 @@ def openai_reply(context):
     if allowed_ids:
         id_schema['enum'] = allowed_ids
     instructions = INSTRUCTIONS
+    if context.get('shared_preferences'):
+        instructions += '\n' + PREFERENCE_INSTRUCTIONS
     if 'photo_candidates' in context:
         instructions += '\n' + PHOTO_INSTRUCTIONS
     instructions += '\n' + POST_CONTINUITY_INSTRUCTIONS
