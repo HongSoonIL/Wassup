@@ -5,7 +5,7 @@ from functools import wraps
 from django.contrib.auth.decorators import login_required
 from django.core import signing
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import F, Q
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
@@ -312,7 +312,16 @@ def image_response(photo):
 @never_cache
 @login_required_json
 def photo(request, post_id):
-    return image_response(get_object_or_404(visible(request.user), pk=post_id).photo)
+    posts = visible(request.user).filter(photo__character_id=F('character_id'))
+    versions = request.GET.getlist('version')
+    if versions:
+        version = versions[0]
+        if len(versions) != 1 or not (
+            version.isascii() and version.isdecimal() and len(version) <= 10 and 0 < int(version) < 2**31
+        ):
+            raise Http404
+        posts = posts.filter(version=int(version))
+    return image_response(get_object_or_404(posts, pk=post_id).photo)
 
 
 @require_GET

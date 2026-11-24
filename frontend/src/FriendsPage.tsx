@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ArrowRight, ArrowUpRight, ChevronRight, House, Images, LogOut, MessageCircle, Plus, UsersRound } from 'lucide-react'
-import { getFriends, getProfile, request } from './chat'
+import { getFriends, getProfile, messagePreview, request } from './chat'
 import type { Friend, Profile } from './chat'
 import FriendMemory from './FriendMemory'
 import FriendPortrait from './FriendPortrait'
@@ -101,7 +101,7 @@ function HomeFriend({ friend }: { friend: Friend & { current_activity?: string |
     </a>
     <a className="home-chat" href={`/chat/${friend.room_id}/`} aria-label={person.name+'에게 말 걸기'}><MessageCircle size={18}/></a>
     <a className="home-last" href={`/chat/${friend.room_id}/`}>
-      <span>{last?.text || (last?.kind === 'photo' ? '사진' : '첫 메시지 보내기')}</span>
+      <span>{messagePreview(last, '첫 메시지 보내기')}</span>
       {last && <time dateTime={last.created_at}>{stamp}</time>}
       {friend.unread_count > 0 && <strong aria-label={'안 읽은 메시지 '+friend.unread_count+'개'}>{friend.unread_count}</strong>}
     </a>

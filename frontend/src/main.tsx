@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ArrowDown, ArrowUp, ArrowUpRight, ChevronLeft, ImageOff, Info, X } from 'lucide-react'
-import { getProfile, markRead, RequestError } from './chat'
+import { getProfile, markRead, messagePhoto, messagePreview, RequestError } from './chat'
 import type { Message, Profile, Quote } from './chat'
 import useChatRoom from './useChatRoom'
 import Publication from './Publication'
@@ -27,10 +27,15 @@ function Brand() {
   return <span className="brand" aria-label="wassup">wassup<span className="brand-dot">.</span></span>
 }
 
-function QuotePreview({ quote, name }: { quote: Quote; name: string }) {
+function quotePhotoKey(messageId: number, quote: Extract<Quote, { status: 'available' }>) {
+  return `quote:${messageId}:${quote.id}:${quote.version}`
+}
+
+function QuotePreview({ quote, name, messageId }: { quote: Quote; name: string; messageId?: number }) {
   return <div className="chat-quote">
     {quote.status === 'available'
-      ? <PostPhoto src={quote.photo_url} alt={quote.photo_alt} className="quote-thumbnail" label={name + '의 인용 사진 확대'}/>
+      ? <PostPhoto src={quote.photo_url} alt={quote.photo_alt} className="quote-thumbnail" label={name + '의 인용 사진 확대'}
+          viewerKey={messageId === undefined ? undefined : quotePhotoKey(messageId, quote)}/>
       : <span className="quote-unavailable" aria-hidden="true"><ImageOff size={19}/></span>}
     <span className="quote-copy"><strong>{name}의 게시물</strong>
       <span>{quote.status === 'available' ? quote.caption : '공개가 종료된 게시물이에요.'}</span>
@@ -85,7 +90,18 @@ function Chat() {
   const characterId = character?.id
   const name = character?.name || '친구'
   const status = activity || character?.status_message
-  const latestPhoto = messages.filter(message => message.photo).at(-1)
+  const latestPhoto = messages.reduce<ReturnType<typeof messagePhoto>>((latest, message) => messagePhoto(message) ?? latest, undefined)
+  const resolvePhoto = (key: string) => {
+    const messageId = Number(key.split(':')[1])
+    const message = messages.find(item => item.id === messageId)
+    if (!message) return
+    const photo = messagePhoto(message)
+    if (photo?.viewerKey === key) return photo
+    const quoted = message.source_post
+    if (quoted?.status === 'available' && quotePhotoKey(message.id, quoted) === key) {
+      return { src: quoted.photo_url, alt: quoted.photo_alt }
+    }
+  }
 
   useLayoutEffect(() => {
     const el = scroll.current
@@ -276,7 +292,7 @@ function Chat() {
   const displayedProfile: Profile | null = demo && character
     ? { ...character, room_id: room, current_activity: activity, next_cursor: null, posts: [] } : profile
 
-  return <main className={'shell ' + (listOpen ? 'show-list' : '')}>
+  return <PhotoViewerProvider resolvePhoto={resolvePhoto} loading={!ready && !loadError}><main className={'shell ' + (listOpen ? 'show-list' : '')}>
     <aside className="side" aria-label="대화 목록">
       {demo ? <Brand/> : <a href="/home/" aria-label="친구 홈"><Brand/></a>}
       <div className="side-heading"><h2>대화</h2><span>{friends.length}</span>
@@ -287,13 +303,13 @@ function Chat() {
         return <a key={f.room_id} className={'friend-row ' + (selected ? 'selected' : '')}
           href={demo ? '#' : '/chat/' + f.room_id + '/'} aria-current={selected ? 'page' : undefined}
           onClick={e => { if (selected) { e.preventDefault(); setListOpen(false) } }}>
-          <FriendIdentity person={f.character} detail={last?.text || (last?.kind === 'photo' ? '사진' : '첫 메시지를 보내 보세요')}/>
+          <FriendIdentity person={f.character} detail={messagePreview(last, '첫 메시지를 보내 보세요')}/>
           <span className="row-meta">{last && <time dateTime={last.created_at}>{hour(last)}</time>}
             {f.unread_count > 0 && <em aria-label={'안 읽은 메시지 ' + f.unread_count + '개'}>{f.unread_count}</em>}</span>
         </a>
       })}</nav>
-      {latestPhoto?.photo && <section className="side-photo"><h3>대화 속 사진</h3>
-        <PostPhoto src={latestPhoto.photo} alt={latestPhoto.text || '대화에서 받은 사진'} className="side-photo-button"/></section>}
+      {latestPhoto && <section className="side-photo"><h3>대화 속 사진</h3>
+        <PostPhoto {...latestPhoto} key={latestPhoto.viewerKey} className="side-photo-button"/></section>}
       {demo && <small className="preview-note">샘플 대화 미리보기</small>}
     </aside>
     <section className="chat-pane" aria-label={name + ' 채팅방'}>
@@ -320,6 +336,8 @@ function Chat() {
             const newDay = !prev || day(prev) !== day(m)
             const own = m.sender === 'user'
             const start = newDay || prev.sender !== m.sender || hour(prev) !== hour(m)
+            const photo = messagePhoto(m)
+            const photoBubble = m.kind === 'photo' || Boolean(photo)
             return <div key={m.id} data-message-id={m.id}>
               {newDay && <div className="day"><time dateTime={m.created_at}>{day(m)}</time></div>}
               <div className={'line ' + (own ? 'out' : 'in') + (start ? ' start' : '')}>
@@ -327,10 +345,11 @@ function Chat() {
                 <div className="message-body">
                   {!own && start && <b className="speaker">{name}</b>}
                   <div className="bubble-row">
-                    <div data-unread={!own && !m.read_at ? m.id : undefined} className={'bubble' + (m.photo ? ' with-photo' : '')}>
-                      {m.source_post && <QuotePreview quote={m.source_post} name={name}/>}
-                      {m.photo && <PostPhoto src={m.photo} alt={m.text || '대화에서 받은 사진'} className="message-photo"/>}
-                      {(m.text || m.kind === 'photo') && <span className="message-text">{m.text || '사진'}</span>}
+                    <div data-unread={!own && !m.read_at ? m.id : undefined} className={'bubble' + (photoBubble ? ' with-photo' : '')}>
+                      {m.source_post && <QuotePreview quote={m.source_post} name={name} messageId={m.id}/>}
+                      {photo ? <PostPhoto {...photo} key={photo.viewerKey} className="message-photo"/> : photoBubble &&
+                        <span className="message-photo message-photo-unavailable"><ImageOff size={20} aria-hidden="true"/>이 사진은 볼 수 없어요.</span>}
+                      {m.text && <span className="message-text">{m.text}</span>}
                     </div>
                     <small className="timestamp">{own && !m.read_at && <strong aria-label="읽지 않음">1</strong>}
                       <time dateTime={m.created_at}>{hour(m)}</time></small>
@@ -379,11 +398,14 @@ function Chat() {
           : <p className="profile-load" role="status">프로필을 불러오는 중…</p>}
       </>}
     </dialog>
-  </main>
+  </main></PhotoViewerProvider>
 }
 const page = root.dataset.friendsPage
-createRoot(root).render(<PhotoViewerProvider>{page
-  ? <FriendsPage page={page} characterId={Number(root.dataset.characterId)} canPublish={root.dataset.canPublish === 'true'} />
-  : root.dataset.publication
-    ? <Publication studio={root.dataset.publication === 'studio'} canPublish={root.dataset.canPublish === 'true'}/>
-    : <Chat/>}</PhotoViewerProvider>)
+const publication = root.dataset.publication
+const canPublish = root.dataset.canPublish === 'true'
+createRoot(root).render(page || publication
+  ? <PhotoViewerProvider>{page
+    ? <FriendsPage page={page} characterId={Number(root.dataset.characterId)} canPublish={canPublish}/>
+    : <Publication studio={publication === 'studio'} canPublish={canPublish}/>
+  }</PhotoViewerProvider>
+  : <Chat/>)

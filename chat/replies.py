@@ -1,8 +1,8 @@
 """Create and dispatch persistent reply plans for the first chat scenario."""
 
 import logging
-from http.client import HTTPException
 from datetime import timedelta
+from http.client import HTTPException
 from time import monotonic
 from uuid import uuid4
 
@@ -13,11 +13,12 @@ from django.db.models import Exists, F, OuterRef, Q
 from chat.live import publish_room_events
 from chat.models import Friendship, Message, ReplyBubble, ReplyPlan
 from chat.reply_timing import CONVERSATION_WINDOW, PHONE_OPEN_WINDOW, ReplyTiming, followup_timing, plan_reply
-from chat.serialization import iso, message_json
+from chat.serialization import iso, message_json, readable_photo
 from config.llm import model_for
 from llm.dialogue import context_for, fake_reply, openai_reply, sample_reply
 from memory.services import enqueue, history_floor, memory_revision
 from world.clock import world_now
+from world.models import PostPhoto
 from world.publication import published_posts
 
 
@@ -58,12 +59,14 @@ def accept_message(room_id, text, source_post_id=None):
     if plan:
         plan.trigger_message = message
         plan.result, plan.model_name, plan.context_versions = [], '', {}
+        plan.attachment = None
         plan.used_memory_ids = []
         plan.generation_token = plan.generation_until = plan.generation_ms = None
         plan.save(
             update_fields=[
                 'trigger_message',
                 'result',
+                'attachment',
                 'model_name',
                 'context_versions',
                 'used_memory_ids',
@@ -135,19 +138,42 @@ def _dispatch_plan(plan_id, room_id, now):
         transaction.on_commit(lambda: publish_room_events(room_id, events))
 
 
-def versions_current(plan, versions, now):
+def lock_current_posts(plan, versions, now):
     if not versions:
-        return True
+        return {}
     # Keep a concurrent edit or withdrawal on the same side of commit as our decision.
     rows = (published_posts(plan.room.character_id, now).filter(pk__in=versions)
-            .order_by('pk').select_for_update(no_key=True).values_list('pk', 'version'))
-    return {str(pk): version for pk, version in rows} == versions
+            .order_by('pk').select_for_update(no_key=True))
+    posts = {str(post.pk): post for post in rows}
+    return posts if {key: post.version for key, post in posts.items()} == versions else None
+
+
+def validate_reply_sources(plan, now):
+    selection = plan.attachment
+    versions = plan.context_versions.copy()
+    if selection is not None:
+        key = str(selection['post_id'])
+        version = selection['version']
+        if versions.setdefault(key, version) != version:
+            return False, None
+    posts = lock_current_posts(plan, versions, now)
+    if posts is None or selection is None:
+        return posts is not None, None
+    post = posts[key]
+    # Lock the asset after the post, matching the publication edit path.
+    asset = PostPhoto.objects.select_for_update(no_key=True).filter(
+        pk=post.photo_id, character_id=post.character_id,
+    ).first()
+    if not readable_photo(asset):
+        return False, None
+    post.photo = asset
+    return True, post
 
 
 def sample_at_deadline(plan, now):
     context = context_for(plan, now, include_memories=False)
     versions = {str(p['id']): p['version'] for p in context['shared_events']}
-    if plan.result or not versions_current(plan, versions, now):
+    if plan.result or lock_current_posts(plan, versions, now) is None:
         # A prepared sequence lost its source, or this sample's snapshot raced an edit.
         context.update(shared_events=[], quoted_post_id=None)
         versions = {}
@@ -155,15 +181,19 @@ def sample_at_deadline(plan, now):
     plan.memory_revision = context['memory_revision']
     plan.used_memory_ids = []
     plan.result = sample_reply(context)
+    plan.attachment = None
     plan.model_name = 'sample' if settings.LLM_BACKEND == 'fake' else 'fallback'
 
 
-def deliver_bubble(plan, bubble, now, events):
+def deliver_bubble(plan, bubble, now, events, post):
+    photo = post if bubble.attachment_post_id else None
     reply = Message.objects.create(room_id=plan.room_id, sender=Message.Sender.CHARACTER,
-                                   text=bubble.text, created_at=now)
+                                   text=bubble.text, created_at=now,
+                                   kind=Message.Kind.PHOTO if photo else Message.Kind.TEXT,
+                                   attachment_post=photo, attachment_version=bubble.attachment_version)
     bubble.message, bubble.status = reply, ReplyBubble.Status.SENT
     bubble.save(update_fields=['message', 'status'])
-    events.extend([{'type': 'typing.stop'}, {'type': 'message.new', 'message': message_json(reply)}])
+    events.extend([{'type': 'typing.stop'}, {'type': 'message.new', 'message': message_json(reply, now=now)}])
     following = plan.bubbles.filter(position=bubble.position + 1).first()
     if following:
         persona = getattr(plan.room.character, 'persona', None)
@@ -189,8 +219,9 @@ def dispatch_followup(plan, now, events):
         bubble.save(update_fields=['typing_at', 'deliver_at', 'status'])
         events.append({'type': 'typing.start', 'expires_at': iso(bubble.deliver_at, timespec='milliseconds')})
     elif bubble.status == ReplyBubble.Status.TYPING and now >= bubble.deliver_at:
-        if versions_current(plan, plan.context_versions, now):
-            deliver_bubble(plan, bubble, now, events)
+        current, post = validate_reply_sources(plan, now)
+        if current:
+            deliver_bubble(plan, bubble, now, events, post)
         else:
             cancel_remaining(plan)
             events.append({'type': 'typing.stop'})
@@ -208,16 +239,23 @@ def dispatch_first(plan, now, events):
         events.extend({'type': 'message.read', 'message_id': pk, 'read_at': iso(now)} for pk in ids)
 
     if plan.reply_at <= now:
-        if (not plan.result or plan.memory_revision != memory_revision(plan.room_id)
-                or not versions_current(plan, plan.context_versions, now)):
+        current, post = (
+            validate_reply_sources(plan, now)
+            if plan.result and plan.memory_revision == memory_revision(plan.room_id)
+            else (False, None)
+        )
+        if not current:
             sample_at_deadline(plan, now)
         plan.generation_token = plan.generation_until = None
-        plan.save(update_fields=['result', 'context_versions', 'model_name', 'memory_revision', 'used_memory_ids',
-                                 'generation_token', 'generation_until'])
+        plan.save(update_fields=['result', 'attachment', 'context_versions', 'model_name', 'memory_revision',
+                                 'used_memory_ids', 'generation_token', 'generation_until'])
         bubbles = [ReplyBubble(plan=plan, position=i, text=text) for i, text in enumerate(plan.result)]
+        if post:
+            selected = bubbles[plan.attachment['bubble_index']]
+            selected.attachment_post, selected.attachment_version = post, post.version
         bubbles[0].typing_at, bubbles[0].deliver_at = plan.typing_at, plan.reply_at
         ReplyBubble.objects.bulk_create(bubbles)
-        deliver_bubble(plan, bubbles[0], now, events)
+        deliver_bubble(plan, bubbles[0], now, events, post)
     elif plan.typing_at <= now and plan.status != ReplyPlan.Status.READY:
         plan.status = ReplyPlan.Status.READY
         plan.save(update_fields=['status', 'updated_at'])
@@ -225,6 +263,21 @@ def dispatch_first(plan, now, events):
     elif plan.status == ReplyPlan.Status.PLANNED:
         plan.status = ReplyPlan.Status.READ
         plan.save(update_fields=['status', 'updated_at'])
+
+
+def selected_attachment(result, context):
+    selection = result.get('attachment')
+    if selection is None:
+        return None
+    if not isinstance(selection, dict) or set(selection) != {'post_id', 'bubble_index'}:
+        raise ValueError('Invalid photo selection')
+    post_id, index = selection['post_id'], selection['bubble_index']
+    if type(post_id) is not int or type(index) is not int or not 0 <= index < len(result['bubbles']):
+        raise ValueError('Invalid photo selection')
+    for candidate in context.get('photo_candidates', []):
+        if candidate['id'] == post_id:
+            return {**selection, 'version': candidate['version']}
+    raise ValueError('Photo selection is not in the reply context')
 
 
 def prepare_next_reply():
@@ -252,11 +305,13 @@ def prepare_next_reply():
         plan.generation_token, plan.generation_until = token, now + timedelta(seconds=30)
         plan.attempts += 1
         plan.result, plan.used_memory_ids, plan.context_versions = [], [], {}
+        plan.attachment = None
         plan.memory_revision = context['memory_revision']
         plan.generation_ms, plan.model_name = None, ''
-        plan.save(update_fields=['generation_token', 'generation_until', 'attempts', 'result', 'used_memory_ids',
-                                 'context_versions', 'memory_revision', 'generation_ms', 'model_name'])
+        plan.save(update_fields=['generation_token', 'generation_until', 'attempts', 'result', 'attachment',
+                                 'used_memory_ids', 'context_versions', 'memory_revision', 'generation_ms', 'model_name'])
     started = monotonic()
+    attachment = None
     try:
         if not context['recent_turns']:
             result, model_name = {'bubbles': sample_reply(context), 'used_memory_ids': []}, 'fallback'
@@ -265,6 +320,7 @@ def prepare_next_reply():
         else:
             result = openai_reply(context)
             model_name = model_for('chat')[: ReplyPlan._meta.get_field('model_name').max_length]
+        attachment = selected_attachment(result, context)
     except (HTTPException, OSError, ValueError, KeyError, TypeError, RecursionError) as exc:
         logging.getLogger(__name__).warning(
             'Dialogue generation failed for reply plan %s (%s, HTTP %s)',
@@ -285,6 +341,7 @@ def prepare_next_reply():
             return True
         claimed.update(
             result=result['bubbles'],
+            attachment=attachment,
             used_memory_ids=result['used_memory_ids'],
             generation_ms=round((monotonic() - started) * 1000),
             model_name=model_name,

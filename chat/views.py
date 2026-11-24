@@ -115,6 +115,7 @@ def add_friend(request):
 
 
 @require_http_methods(['GET', 'POST'])
+@never_cache
 @ensure_csrf_cookie
 @login_required_json
 def friend_list(request):
@@ -139,7 +140,9 @@ def friend_list(request):
         )
         .order_by(F('last_message_id').desc(nulls_last=True), '-created_at')
     )
-    last_messages = Message.objects.select_related('source_post', 'room').in_bulk([r.last_message_id for r in rooms if r.last_message_id])
+    last_messages = Message.objects.select_related('source_post', 'attachment_post__photo', 'room').in_bulk(
+        [r.last_message_id for r in rooms if r.last_message_id]
+    )
 
     friends = []
     for room in rooms:
@@ -182,6 +185,7 @@ def friend_detail(request, room_id):
 
 
 @require_http_methods(['GET', 'POST'])
+@never_cache
 @ensure_csrf_cookie
 @login_required_json
 def room_messages(request, room_id):
@@ -236,7 +240,7 @@ def list_messages(request, room):
         return error(400, 'limit은 1 이상이어야 해요.')
     limit = min(limit, PAGE_SIZE_MAX)
 
-    qs = room.messages.select_related('source_post', 'room').order_by('-id')
+    qs = room.messages.select_related('source_post', 'attachment_post__photo', 'room').order_by('-id')
     if before is not None:
         qs = qs.filter(id__lt=before)
     page = list(qs[:limit + 1])  # 하나 더 가져와서 더 있는지 본다

@@ -14,7 +14,27 @@ export type Message = {
   created_at: string
   read_at: string | null
   source_post?: Quote | null
+  attachment?: Quote | null
   photo?: string
+}
+
+export function messagePhoto(message: Message) {
+  const attachment = message.attachment
+  if (message.kind === 'photo' && attachment?.status === 'available' && attachment.photo_url) {
+    return { src: attachment.photo_url, alt: attachment.photo_alt,
+      viewerKey: `attachment:${message.id}:${attachment.id}:${attachment.version}` }
+  }
+  if (attachment === undefined && message.photo) {
+    return { src: message.photo, alt: message.text || '대화에서 받은 사진', viewerKey: `preview:${message.id}` }
+  }
+}
+
+export function messagePreview(message: Message | null | undefined, empty: string) {
+  if (!message) return empty
+  const photo = messagePhoto(message)
+  if (message.kind !== 'photo' && !photo) return message.text || empty
+  const label = photo ? '사진' : '볼 수 없는 사진'
+  return message.text ? `${label} · ${message.text}` : label
 }
 export type Friend = {
   room_id: number

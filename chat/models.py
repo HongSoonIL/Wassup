@@ -39,7 +39,7 @@ class Message(models.Model):
 
     class Kind(models.TextChoices):
         TEXT = 'text', '글'
-        PHOTO = 'photo', '사진'  # 사진 파일 연결(Photo 모델)은 3단계에서 붙인다
+        PHOTO = 'photo', '사진'
 
     room = models.ForeignKey(Friendship, on_delete=models.CASCADE, related_name='messages')
     sender = models.CharField('보낸 쪽', max_length=10, choices=Sender.choices)
@@ -47,6 +47,10 @@ class Message(models.Model):
     text = models.TextField('내용', blank=True)
     source_post = models.ForeignKey('world.FeedPost', null=True, blank=True, on_delete=models.PROTECT)
     source_version = models.PositiveIntegerField(null=True, blank=True)
+    attachment_post = models.ForeignKey(
+        'world.FeedPost', null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+    )
+    attachment_version = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField('보낸 시각', default=world_now)
     # 사용자 메시지: 캐릭터가 읽은 시각 (숫자 1이 사라짐) / 캐릭터 메시지: 사용자가 읽은 시각
     read_at = models.DateTimeField('읽은 시각', null=True, blank=True)
@@ -91,6 +95,8 @@ class ReplyPlan(models.Model):
     typing_at = models.DateTimeField('입력 시작 시각')
     reply_at = models.DateTimeField('답장 시각')
     result = models.JSONField('생성 결과', default=list, blank=True, help_text='말풍선 문장 목록')
+    # The server pins the validated selection before the timed bubbles exist.
+    attachment = models.JSONField(null=True, blank=True, editable=False)
     status = models.CharField('상태', max_length=12, choices=Status.choices, default=Status.PLANNED)
     generation_token = models.UUIDField(null=True, editable=False)
     generation_until = models.DateTimeField(null=True, editable=False)
@@ -133,6 +139,10 @@ class ReplyBubble(models.Model):
     plan = models.ForeignKey(ReplyPlan, on_delete=models.CASCADE, related_name='bubbles')
     position = models.PositiveSmallIntegerField()
     text = models.TextField()
+    attachment_post = models.ForeignKey(
+        'world.FeedPost', null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+    )
+    attachment_version = models.PositiveIntegerField(null=True, blank=True)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.QUEUED)
     typing_at = models.DateTimeField(null=True)
     deliver_at = models.DateTimeField(null=True)

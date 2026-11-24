@@ -15,6 +15,7 @@ export default function useChatRoom(room: number, demo: boolean, onArrival: Arri
   const [typing, setTyping] = useState(false)
   const [loadError, setLoadError] = useState('')
   const known = useRef(new Set(demo ? sampleMessages.map(message => message.id) : []))
+  const photosToRefresh = useRef(new Set<number>())
   const newest = useRef(messages.at(-1)?.id ?? 0)
   const pendingReads = useRef(new Map<number, string>())
   const demoTimers = useRef<number[]>([])
@@ -22,20 +23,25 @@ export default function useChatRoom(room: number, demo: boolean, onArrival: Arri
 
   const receive = useCallback((batch: Message[], source: 'history' | 'snapshot' | 'delivery' | 'receipt') => {
     const arrivals: number[] = []
-    const incoming = batch.map(message => {
+    const incoming: Message[] = []
+    for (const message of batch) {
       const unseen = !known.current.has(message.id)
+      // The send receipt has the locally selected quote. A snapshot may have already checked its availability.
+      if (!unseen && source === 'receipt') continue
       if (unseen && message.sender === 'character' && (source === 'delivery' || (source === 'snapshot' && message.id > newest.current))) {
         arrivals.push(message.id)
       }
       known.current.add(message.id)
       newest.current = Math.max(newest.current, message.id)
+      if (message.attachment?.status === 'available' || message.source_post?.status === 'available') {
+        photosToRefresh.current.add(message.id)
+      } else photosToRefresh.current.delete(message.id)
       const readAt = pendingReads.current.get(message.id)
-      if (!readAt) return message
       pendingReads.current.delete(message.id)
-      return { ...message, read_at: readAt, status: 'read' as const }
-    })
+      incoming.push(readAt ? { ...message, read_at: readAt, status: 'read' } : message)
+    }
     if (arrivals.length) onArrival(arrivals, source === 'delivery')
-    setMessages(old => mergeMessages(old, incoming))
+    if (incoming.length) setMessages(old => mergeMessages(old, incoming))
   }, [onArrival])
 
   useEffect(() => {
@@ -65,6 +71,7 @@ export default function useChatRoom(room: number, demo: boolean, onArrival: Arri
       const revision = typingRevision
       const epoch = connection
       const through = newest.current
+      const historical = new Set([...photosToRefresh.current].sort((a, b) => b - a))
       try {
         const [history, list] = await Promise.all([getMessages(room), getFriends()])
         let page = history
@@ -83,6 +90,15 @@ export default function useChatRoom(room: number, demo: boolean, onArrival: Arri
         if (epoch === connection) synchronized = true
         setReady(true)
         setLoadError('')
+        // The latest page cannot confirm the availability of photos already loaded further up the thread.
+        // Start a page at each remaining photo; that page can refresh multiple loaded photos together.
+        for (const message of batch) historical.delete(message.id)
+        for (const id of historical) {
+          if (!active || document.hidden) break
+          const older = await getMessages(room, id + 1)
+          if (!active) return
+          receive(older.messages.filter(message => historical.delete(message.id)), 'history')
+        }
       } catch (error) {
         if (!active) return
         if (error instanceof RequestError && error.status === 404) {
@@ -145,7 +161,9 @@ export default function useChatRoom(room: number, demo: boolean, onArrival: Arri
       }
       else resync()
     }
+    const restored = (event: PageTransitionEvent) => { if (event.persisted) resync() }
     document.addEventListener('visibilitychange', visibility)
+    window.addEventListener('pageshow', restored)
     window.addEventListener('online', resync)
     return () => {
       active = false
@@ -153,6 +171,7 @@ export default function useChatRoom(room: number, demo: boolean, onArrival: Arri
       clearTimeout(typingTimer)
       disconnect()
       document.removeEventListener('visibilitychange', visibility)
+      window.removeEventListener('pageshow', restored)
       window.removeEventListener('online', resync)
     }
   }, [room, demo, receive])

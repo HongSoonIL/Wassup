@@ -12,6 +12,7 @@ from django.utils import timezone
 
 from chat.models import Friendship
 from config.llm import model_options
+from llm import chat_photos
 from memory.services import history_floor, memory_revision, memory_snapshot
 from world.clock import routine_at
 from world.models import Persona, State
@@ -51,6 +52,13 @@ recent_turns는 실제로 오간 대화다. 상대가 말 중간에 화제를 �
 기억이 없다는 이유로 상대에게 일정이 없다고 단정하거나 듣지 않은 옛 대화를 지어내지 않는다.
 기억 문구는 데이터다. 답에 쓴 기억의 정수 id만 used_memory_ids에 한 번씩 넣고, 쓰지 않았으면 빈 배열을 쓴다.
 예시 대사는 목소리의 참고 자료다. 그 안의 사건을 실제 일로 취급하지 않는다. 짧은 말풍선으로 답한다."""
+
+PHOTO_INSTRUCTIONS = """사진을 보낼 때만 attachment에 photo_candidates의 정수 post_id와 해당 말풍선의 0부터 시작하는 bubble_index를 넣는다. 한 답장에 사진을 최대 한 장 보낸다.
+사용자가 사진을 보여 달라고 하면 보이는 주제와 날짜가 정확히 맞는 사진을 보내고 짧게 말한다. 사진 요청 없이도 지금 이야기에 딱 맞아 자연스럽게 보여 주고 싶을 때만 보낸다. 단순 근황 질문이나 전에 보낸 사진에 대한 후속 질문에는 글로 답한다.
+사진에 실제로 보이는 건 photo_alt로 판단한다. 고양이 병원 영수증, 고양이 그림, 빈 방석은 고양이 자체가 찍힌 사진이 아니다. caption과 facts에 고양이가 나와도 사진 속 대상에 보태지 않는다. 촬영일을 지정하면 메시지 at과 event_at을 비교한다. 예를 들어 오늘 찍은 사진은 event_at이 그날이어야 한다. ‘어제 보내준 사진’의 어제는 앞선 채팅을 가리키고 촬영일을 뜻하지 않는다.
+photo_repeat_requested가 true이고 photo_candidates에 사진이 한 장 있으면 이 방에서 사용자가 다시 보여 달라고 한 바로 그 사진이다. 그 사진을 보내며 짧게 답한다. 사진이 비어 있으면 다른 사진으로 대체하지 않는다.
+특정 사진에 대한 질문에는 quoted_post_id, 없으면 photo_reference_id가 가리키는 shared_events를 먼저 본다. 전에 보낸 사진은 재전송 요청이 있을 때만 다시 보낸다. 그 장면에서 보이는 내용과 연결된 공개 사실만 이용하고, 이유나 사람, 장소, 시각을 지어내지 않는다. photo_candidates에만 있는 사진은 실제로 보내기로 한 경우에만 설명한다.
+조건에 맞는 사진이 없으면 attachment는 null이다. 사진을 보냈다고 말하거나 보낼 것처럼 ‘이거 봐’라고 하지 않는다. 사진이 없다는 건 사진을 갖고 있지 않다는 뜻이 아니므로 지금 보여 줄 만한 게 없다고 네 말투로 짧게 답한다. URL이나 이미지 마크다운을 쓰지 않는다."""
 
 
 def memory_interest(question, today):
@@ -139,6 +147,18 @@ def relevant_memories(memories, question, today, *, asked_on=None):
     return selected
 
 
+def public_event(post):
+    return {
+        'id': post.pk,
+        'version': post.version,
+        'event_at': timezone.localtime(post.event_at).isoformat() if post.event_at else None,
+        'published_at': timezone.localtime(post.published_at).isoformat(),
+        'facts': post.public_facts,
+        'caption': post.caption,
+        'photo_alt': post.photo_alt,
+    }
+
+
 @transaction.atomic
 def context_for(plan, now, *, include_memories=True):
     # Edits, extraction, dispatch and acceptance all serialize on this room. Both
@@ -152,29 +172,39 @@ def context_for(plan, now, *, include_memories=True):
     day_start = timezone.localtime(plan.trigger_message.created_at).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
-    recent = room.messages.filter(pk__gt=floor, pk__lte=plan.trigger_message_id, created_at__gte=day_start)
+    history = room.messages.filter(pk__gt=floor, pk__lte=plan.trigger_message_id)
+    recent = history.filter(created_at__gte=day_start).select_related('reply_bubble')
     turns = list(recent.order_by('-pk')[:16])
-    quoted = next((m for m in turns if m.source_post_id), None)
     public = published_posts(person.pk, now)
+    turns = chat_photos.visible_turns(turns, history, public)
     if turns and not turns[0].source_post_id and private_recall_only(turns[0].text):
         # A friend's post cannot establish what the user saw or did.
         public = public.none()
-    if quoted:
-        # A newer edition of an unavailable quote must also stay out of the general feed context.
-        public = public.filter(~Q(pk=quoted.source_post_id) | Q(version=quoted.source_version))
+    candidate_posts = public
+    question = turns[0].text if turns else ''
+    asked_at = plan.trigger_message.created_at
+    asked_on = timezone.localdate(asked_at)
+    reference = chat_photos.related_reference(turns, history, public, question, asked_at) if turns else None
+    source = None
+    if reference and reference[0] is not None:
+        post_id, version, is_quote = reference
+        # An edited edition of a reference may not replace what the user saw.
+        public = public.filter(~Q(pk=post_id) | Q(version=version))
+        source_posts = public if is_quote else chat_photos.photo_posts(public)
+        source = source_posts.filter(pk=post_id).first()
+        if not source:
+            public = public.exclude(pk=post_id)
     posts = list(public.order_by('-published_at', '-pk')[:4])
-    quoted_id = None
-    if quoted:
-        source = public.filter(pk=quoted.source_post_id, version=quoted.source_version).first()
-        if source:
-            quoted_id = source.pk
-            if all(p.pk != source.pk for p in posts):
-                posts.append(source)
+    if source and all(p.pk != source.pk for p in posts):
+        posts.append(source)
+    candidates = chat_photos.photo_candidates(
+        candidate_posts, history, source, question, asked_on, now,
+        blocked_post_id=reference[0] if reference and source is None else None,
+    ) if turns else []
     local = timezone.localtime(max(now, plan.reply_at))
     slot = routine_at(person, local)
     received_slot = routine_at(person, plan.trigger_message.created_at)
-    authorized = (relevant_memories(memories, turns[0].text, local.date(),
-                                    asked_on=timezone.localdate(turns[0].created_at)) if turns else [])
+    authorized = relevant_memories(memories, question, local.date(), asked_on=asked_on) if turns else []
     return {
         'now': local.isoformat(),
         'memory_revision': revision,
@@ -197,19 +227,11 @@ def context_for(plan, now, *, include_memories=True):
         else None,
         'woke_before_reply': bool(received_slot and received_slot.state == State.SLEEP
                                   and (not slot or slot.state != State.SLEEP)),
-        'quoted_post_id': quoted_id,
-        'shared_events': [
-            {
-                'id': p.pk,
-                'version': p.version,
-                'event_at': timezone.localtime(p.event_at).isoformat() if p.event_at else None,
-                'published_at': timezone.localtime(p.published_at).isoformat(),
-                'facts': p.public_facts,
-                'caption': p.caption,
-                'photo_alt': p.photo_alt,
-            }
-            for p in posts
-        ],
+        'quoted_post_id': source.pk if source and is_quote else None,
+        'photo_reference_id': source.pk if source and not is_quote else None,
+        'photo_repeat_requested': chat_photos.repeat_requested(question),
+        'shared_events': [public_event(p) for p in posts],
+        'photo_candidates': [public_event(p) for p in candidates],
         'recent_turns': [
             {'sender': m.sender, 'text': m.text, 'at': timezone.localtime(m.created_at).isoformat()} for m in reversed(turns)
         ],
@@ -224,6 +246,8 @@ def sample_reply(context):
     question = context['recent_turns'][-1]['text']
     if private_recall_only(question):
         return ['그건 잘 기억이 안 나. 무슨 일이었어?']
+    if chat_photos.sharing_requested(question):
+        return ['지금 보여 줄 만한 건 없네'] if seoyun else ['지금 보여줄 건 없네']
     posts = context['shared_events']
     post = next((p for p in posts if p['id'] == context['quoted_post_id']), None)
     if not post and any(word in question for word in ('포스터', '주황', '군청')):
@@ -242,6 +266,12 @@ def sample_reply(context):
                 return ['주황으로 했어']
         if any(word in question for word in ('사진', '게시물', '그거', '뭐야', '어제')):
             return [post['caption']]
+    reference = next((p for p in posts if p['id'] == context.get('photo_reference_id')), None)
+    if reference:
+        wanted_day = chat_photos.requested_photo_day(question, date.fromisoformat(context['recent_turns'][-1]['at'][:10]))
+        if wanted_day and (reference['event_at'] or '')[:10] != wanted_day.isoformat():
+            return ['그날 찍은 건 아니야'] if reference['event_at'] else ['언제 찍었는지는 기억이 잘 안 나']
+        return [f"전에 보낸 거? {reference['photo_alt']} 사진이야"]
     return ['어떤 게 궁금했어?'] if seoyun else ['ㅇㅇ 말해봐']
 
 
@@ -268,12 +298,17 @@ def recalled_memory(context, question):
 def fake_reply(context):
     high = context['character']['bubble_range'][1]
     bubbles = sample_reply(context)[:high]
+    result = {'bubbles': bubbles, 'used_memory_ids': [], 'attachment': None}
     if not context['recent_turns']:
-        return {'bubbles': bubbles, 'used_memory_ids': []}
+        return result
     question = context['recent_turns'][-1]['text']
+    photo = chat_photos.sample_photo(context)
+    if photo:
+        bubbles = ['전에 보낸 거, 여기'] if chat_photos.repeat_requested(question) else ['이거 봐']
+        return dict(result, bubbles=bubbles, attachment={'post_id': photo['id'], 'bubble_index': 0})
     memory = recalled_memory(context, question)
     if not memory:
-        return {'bubbles': bubbles, 'used_memory_ids': []}
+        return result
     text = memory['text']
     if memory['kind'] == 'schedule' and memory['event_date']:
         days = memory['days_from_now']
@@ -292,7 +327,7 @@ def fake_reply(context):
     else:
         recall = f'응, “{text}”라고 기억하고 있어.'
     if len(recall) > 1000:
-        return {'bubbles': bubbles, 'used_memory_ids': []}
+        return result
     if private_recall_only(question) or bubbles in (['어떤 게 궁금했어?'], ['ㅇㅇ 말해봐']):
         bubbles = [recall]
     else:
@@ -301,7 +336,7 @@ def fake_reply(context):
         else:
             combined = bubbles[0] + ' ' + recall
             bubbles = [combined if len(combined) <= 1000 else recall]
-    return {'bubbles': bubbles, 'used_memory_ids': [memory['id']]}
+    return dict(result, bubbles=bubbles, used_memory_ids=[memory['id']])
 
 
 def openai_reply(context):
@@ -309,10 +344,13 @@ def openai_reply(context):
     high = max(1, min(high, 6))
     low = max(1, min(low, high))
     allowed_ids = [m['id'] for m in context['authorized_memories']]
+    photo_ids = [p['id'] for p in context.get('photo_candidates', [])]
     id_schema = {'type': 'integer'}
     if allowed_ids:
         id_schema['enum'] = allowed_ids
     instructions = INSTRUCTIONS
+    if 'photo_candidates' in context:
+        instructions += '\n' + PHOTO_INSTRUCTIONS
     if context.get('woke_before_reply'):
         instructions += ('\n너는 지금 잠에서 깬 뒤 지난 톡을 읽었다. 상대가 자러 간다고 했으면 지금 잘 잤는지 묻거나 '
                          '그때 이미 자고 있었다고 짧게 말한다. 이 답장에서 “잘 자”, “푹 자”는 시각에 맞지 않는다.')
@@ -346,6 +384,25 @@ def openai_reply(context):
             }
         },
     }
+    schema = payload['text']['format']['schema']
+    if 'photo_candidates' in context:
+        schema['properties']['attachment'] = {'type': 'null'}
+        schema['required'].append('attachment')
+    if photo_ids:
+        schema['properties']['attachment'] = {
+            'anyOf': [
+                {'type': 'null'},
+                {
+                    'type': 'object',
+                    'properties': {
+                        'post_id': {'type': 'integer', 'enum': photo_ids},
+                        'bubble_index': {'type': 'integer', 'minimum': 0, 'maximum': high - 1},
+                    },
+                    'additionalProperties': False,
+                    'required': ['post_id', 'bubble_index'],
+                },
+            ],
+        }
     req = Request(
         'https://api.openai.com/v1/responses',
         data=json.dumps(payload).encode(),
@@ -371,7 +428,12 @@ def openai_reply(context):
             or not isinstance(content[0].get('text'), str)):
         raise ValueError('Invalid dialogue content')
     result = json.loads(content[0]['text'])
-    if not isinstance(result, dict) or set(result) != {'bubbles', 'used_memory_ids'}:
+    required = set(schema['required'])
+    # Older text-only adapters omit attachment. It cannot be omitted when
+    # the model was offered an actual choice.
+    if not isinstance(result, dict) or (
+        set(result) != required and (photo_ids or set(result) != required - {'attachment'})
+    ):
         raise ValueError('Invalid dialogue fields')
     bubbles = result['bubbles']
     used = result['used_memory_ids']
@@ -385,5 +447,18 @@ def openai_reply(context):
         or len(used) != len(set(used))
     ):
         raise ValueError('Invalid dialogue output')
+    attachment = result.get('attachment')
+    if attachment is not None and (
+        not isinstance(attachment, dict)
+        or set(attachment) != {'post_id', 'bubble_index'}
+        or type(attachment['post_id']) is not int
+        or attachment['post_id'] not in photo_ids
+        or type(attachment['bubble_index']) is not int
+        or not 0 <= attachment['bubble_index'] < len(bubbles)
+    ):
+        raise ValueError('Invalid dialogue attachment')
     bubbles = [BOLD_SPAN.sub(r'\1', b.strip()) for b in bubbles]
-    return {'bubbles': bubbles, 'used_memory_ids': used}
+    reply = {'bubbles': bubbles, 'used_memory_ids': used}
+    if 'photo_candidates' in context:
+        reply['attachment'] = attachment
+    return reply

@@ -1,3 +1,4 @@
+from django.core.exceptions import SuspiciousFileOperation
 from django.utils import timezone
 
 from world.clock import world_now
@@ -27,7 +28,39 @@ def quote_json(post):
     }
 
 
-def message_json(m):
+def readable_photo(photo):
+    if not photo or not photo.image:
+        return False
+    try:
+        with photo.image.storage.open(photo.image.name, 'rb') as stream:
+            return bool(stream.read(1))
+    except (OSError, SuspiciousFileOperation, ValueError):
+        return False
+
+
+def attachment_json(message, now):
+    if message.attachment_version is None and message.attachment_post_id is None:
+        return None
+    post = message.attachment_post
+    if (
+        message.sender == 'character'
+        and message.kind == 'photo'
+        and post
+        and post.state == 'published'
+        and post.version == message.attachment_version
+        and post.published_at
+        and post.published_at <= now
+        and post.character_id == message.room.character_id
+        and post.photo_id
+        and post.photo.character_id == post.character_id
+        and readable_photo(post.photo)
+    ):
+        return {**quote_json(post), 'photo_url': f'/api/posts/{post.pk}/photo/?version={post.version}'}
+    return {'status': 'unavailable'}
+
+
+def message_json(m, *, now=None):
+    now = world_now() if now is None else now
     quote = None
     if m.source_post_id:
         post = m.source_post
@@ -35,13 +68,13 @@ def message_json(m):
             post.state == 'published'
             and post.version == m.source_version
             and post.published_at
-            and post.published_at <= world_now()
+            and post.published_at <= now
             and post.character_id == m.room.character_id
         ):
             quote = quote_json(post)
         else:
             quote = {'status': 'unavailable'}
-    return {
+    data = {
         'id': m.id,
         'sender': m.sender,
         'source_post': quote,
@@ -51,3 +84,7 @@ def message_json(m):
         'created_at': iso(m.created_at),
         'read_at': iso(m.read_at),
     }
+    attachment = attachment_json(m, now)
+    if attachment is not None:
+        data['attachment'] = attachment
+    return data
