@@ -1,0 +1,75 @@
+{
+  "fixture_version": 1,
+  "description": "가상 학교의 2027년 봄 학사력. 기존 시안의 인물과 사진을 사용한다. 각 scenario는 지정된 checkpoint에서 독립적으로 재생한다. 시각은 모두 한국 시각이다. private_memory는 원본 메시지 시각부터 해당 방에만 적용한다.",
+  "timezone": "Asia/Seoul",
+  "week": {"id": 12, "week_start": "2027-04-19", "week_end_exclusive": "2027-04-26", "season": "봄"},
+  "generation_input": {
+    "calendar": [
+      {"id": 101, "revision": 1, "label": "중간고사", "start_date": "2027-04-19", "end_date_exclusive": "2027-04-24"},
+      {"id": 102, "revision": 1, "label": "체육대회", "start_date": "2027-04-24", "end_date_exclusive": "2027-04-25"}
+    ],
+    "characters": [
+      {"id": 1, "name": "도현", "profile_line": "쉬는 날에도 커피 마심", "routine_examples": [
+        {"start": "2027-04-21T18:00:00+09:00", "end": "2027-04-21T22:00:00+09:00", "activity": "카페 알바 중", "state": "focus"}
+      ]},
+      {"id": 2, "name": "서윤", "profile_line": "두부 사진 거의 매일 올라옴", "routine_examples": [
+        {"start": "2027-04-21T14:00:00+09:00", "end": "2027-04-21T16:20:00+09:00", "activity": "작업실에서 포스터 인쇄 중", "state": "focus"},
+        {"start": "2027-04-22T09:00:00+09:00", "end": "2027-04-22T10:00:00+09:00", "activity": "시험 준비 중", "state": "focus"}
+      ]}
+    ],
+    "recent_publications": [],
+    "available_photos": [
+      {"photo_id": "studio-print", "character_id": 2, "alt": "작업실 책상의 군청색과 주황색 포스터 시안", "fixture_asset_path": "frontend/src/design/assets/studio-print.webp"},
+      {"photo_id": "cafe-interior", "character_id": 1, "alt": "아이스커피 한 잔이 놓인 카페 창가", "fixture_asset_path": "frontend/src/design/assets/cafe-interior.webp"}
+    ]
+  },
+  "draft_candidates": [
+    {"post_id": 501, "version": 1, "character_id": 2, "state": "draft", "calendar_ids": [101], "event_at": "2027-04-21T16:20:00+09:00", "publish_at": "2027-04-21T16:30:00+09:00", "photo_id": "studio-print", "caption": "둘 다 뽑아 보길 잘했다. 오늘은 주황 🍊", "public_facts": ["군청색과 주황색으로 포스터를 한 장씩 인쇄했다.", "최종 색으로 주황을 골랐다."], "operator_note": "두 인쇄물이 한 장에 잘렸는지 검토", "issues": []},
+    {"post_id": 502, "version": 1, "character_id": 1, "state": "draft", "calendar_ids": [102], "publish_at": "2027-04-23T17:50:00+09:00", "photo_id": "cafe-interior", "caption": "내일 체육대회 몇 시에 모이냐… 커피부터 사야겠다", "public_facts": ["체육대회 전날 카페에 들렀다."], "issues": []},
+    {"post_id": 503, "version": 1, "character_id": 2, "state": "draft", "calendar_ids": [101], "publish_at": "2027-04-22T18:00:00+09:00", "photo_id": null, "caption": "책상 치우다가 작년 스케치북 발견", "public_facts": ["책상을 정리하다가 스케치북을 찾았다."], "issues": ["missing_photo"]}
+  ],
+  "no_post_dates": ["2027-04-19", "2027-04-20", "2027-04-24", "2027-04-25"],
+  "rooms": [
+    {"id": 31, "account": "A", "character_id": 2},
+    {"id": 32, "account": "B", "character_id": 2},
+    {"id": 33, "account": "A", "character_id": 1}
+  ],
+  "private_memory": {"id": 701, "room_id": 31, "consent": true, "source_message": {"id": 901, "at": "2027-04-20T17:00:00+09:00", "text": "나 이번 목요일에 통계 시험 봐. 기억해 줘."}, "fact": "A는 4월 22일 목요일에 통계 시험을 본다."},
+  "checkpoints": [
+    {"id": "generated", "at": "2027-04-19T09:00:00+09:00", "operation": "generate_week", "expect": {"week_revision": 1, "states": {"501": "draft", "502": "draft", "503": "draft"}}},
+    {"id": "reviewed", "at": "2027-04-19T09:05:00+09:00", "operation": "skip", "input": {"post_id": 503, "expected_revision": 1}, "expect": {"week_revision": 2, "changed": [{"post_id": 503, "version": 2, "state": "skipped"}]}},
+    {"id": "approved", "at": "2027-04-19T09:10:00+09:00", "operation": "approve_week", "input": {"week_id": 12, "expected_revision": 2}, "expect": {"week_revision": 3, "changed": [{"post_id": 501, "version": 1, "state": "scheduled"}, {"post_id": 502, "version": 1, "state": "scheduled"}]}},
+    {"id": "rescheduled_event", "at": "2027-04-20T13:00:00+09:00", "operation": "move_calendar_event", "input": {"calendar_id": 102, "revision": 2, "start_date": "2027-05-01", "end_date_exclusive": "2027-05-02"}, "expect": {"week_revision": 4, "changed": [{"post_id": 502, "version": 2, "state": "draft"}], "invalidated_reservations": [{"post_id": 502, "version": 1}], "still_scheduled": [{"post_id": 501, "version": 1}]}},
+    {"id": "published", "at": "2027-04-21T16:30:00+09:00", "operation": "dispatch_due", "expect": {"changed": [{"post_id": 501, "version": 1, "state": "published"}], "public_post_ids": [501]}}
+  ],
+  "scenarios": [
+    {"id": "optimistic_review", "checkpoint": "reviewed", "input": {"operation": "approve_week", "expected_revision": 1}, "expect": {"http_status": 409, "week_revision": 2, "scheduled_post_ids": []}},
+    {"id": "photo_required", "checkpoint": "generated", "input": {"operation": "approve_week", "expected_revision": 1, "week_id": 12}, "expect": {"http_status": 422, "blocked_post_ids": [503], "scheduled_post_ids": []}},
+    {"id": "before_release", "checkpoint": "rescheduled_event", "input": {"at": "2027-04-21T16:29:59+09:00", "source_post_id": 501, "room_id": 31}, "expect": {"feed_post_ids": [], "profile_post_ids": [], "reply_context_post_ids": [], "photo_access": false, "quote_accepted": false}},
+    {"id": "failed_publication", "checkpoint": "rescheduled_event", "steps": [
+      {"at": "2027-04-21T16:30:00+09:00", "operation": "dispatch_due_with_photo_failure", "expect": {"post_id": 501, "version": 1, "state": "failed", "public_post_ids": [], "photo_access": false}},
+      {"at": "2027-04-21T16:32:00+09:00", "operation": "retry_and_dispatch", "post_id": 501, "expect": {"state": "published", "published_at": "2027-04-21T16:32:00+09:00", "public_post_ids": [501]}},
+      {"at": "2027-04-21T16:32:01+09:00", "operation": "replay_dispatch", "post_id": 501, "expect": {"public_post_ids": [501], "publication_count": 1}}
+    ]},
+    {"id": "stale_reservation", "checkpoint": "published", "input": {"at": "2027-04-23T17:50:00+09:00", "operation": "dispatch", "post_id": 502, "version": 1}, "expect": {"current_version": 2, "state": "draft", "public_post_ids": [501]}},
+    {"id": "quoted_question", "checkpoint": "published", "input": {"at": "2027-04-21T16:31:00+09:00", "room_id": 31, "message": {"text": "그래서 결국 무슨 색 골랐어?", "source_post_id": 501}}, "expect": {"http_status": 201, "reply_context_post_ids": [501], "required_fact": "주황색을 골랐다.", "example_reply": "주황! 뽑아 보니까 그쪽으로 바로 마음 갔어 ㅎㅎ"}},
+    {"id": "wrong_character_quote", "checkpoint": "published", "input": {"room_id": 33, "message": {"text": "어떤 포스터야?", "source_post_id": 501}}, "expect": {"http_status": 404, "quote_accepted": false, "messages_created": 0, "reply_plans_created": 0}},
+    {"id": "next_day", "checkpoint": "published", "input": {"at": "2027-04-22T10:05:00+09:00", "question": "어제 포스터 무슨 색으로 골랐어?", "room_ids": [31,32]}, "expect": [
+      {"room_id": 31, "reply_context_post_ids": [501], "permitted_memory_ids": [701], "required_fact": "주황색을 골랐다.", "example_reply": "주황으로 했지! 너 오늘 통계 시험은 어땠어?"},
+      {"room_id": 32, "reply_context_post_ids": [501], "permitted_memory_ids": [], "required_fact": "주황색을 골랐다.", "forbidden_facts": ["A의 통계 시험"], "example_reply": "주황으로 했어 ㅎㅎ 종이에서 더 예쁘더라."}
+    ]},
+    {"id": "other_friend_memory", "checkpoint": "published", "input": {"room_id": 33, "question": "내가 오늘 무슨 시험 본댔지?"}, "expect": {"permitted_memory_ids": [], "forbidden_facts": ["A의 통계 시험"]}},
+    {"id": "delete_before_delivery", "checkpoint": "published", "room_id": 31, "steps": [
+      {"at": "2027-04-22T09:30:00+09:00", "operation": "send", "message": {"text": "어제 사진 기억해?", "source_post_id": 501}},
+      {"at": "2027-04-22T09:50:00+09:00", "operation": "prepare_reply", "used_memory_ids": [701]},
+      {"at": "2027-04-22T09:55:00+09:00", "operation": "delete_memory", "memory_id": 701},
+      {"at": "2027-04-22T10:00:30+09:00", "operation": "dispatch_reply", "expect": {"reply_count": 1, "permitted_memory_ids": [], "forbidden_facts": ["A의 통계 시험"], "required_fact": "주황색을 골랐다."}}
+    ]},
+    {"id": "first_deadline", "checkpoint": "published", "room_id": 33, "steps": [
+      {"at": "2027-04-21T18:40:00+09:00", "operation": "send", "message": {"text": "오늘도 카페야?"}, "expect": {"deadline": "2027-04-21T21:40:00+09:00"}},
+      {"at": "2027-04-21T20:10:00+09:00", "operation": "send", "message": {"text": "몇 시에 끝나?"}, "expect": {"deadline": "2027-04-21T21:40:00+09:00", "active_plan_count": 1}},
+      {"at": "2027-04-21T21:40:00+09:00", "operation": "dispatch_with_model_timeout", "expect": {"reply_count": 1, "reply_kind": "fallback", "must_answer_latest_question": true, "example_reply": "열 시에 끝남 ㅋㅋ"}}
+    ]},
+    {"id": "profile_round_trip", "checkpoint": "published", "input": {"room_id": 31, "message_anchor": 901, "composer_text": "그 사진", "source_post_id": 501, "open_profile_via": ["chat_header", "character_avatar"]}, "expect_in_profile": {"character_id": 2, "profile_line": "두부 사진 거의 매일 올라옴"}, "expect_after_close": {"room_id": 31, "message_anchor": 901, "composer_text": "그 사진", "source_post_id": 501}}
+  ]
+}
