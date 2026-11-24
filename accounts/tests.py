@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from unittest.mock import patch
+from urllib.parse import quote
 
 from django.contrib.auth import SESSION_KEY
 from django.test import Client, TestCase, override_settings
@@ -20,9 +21,10 @@ class AccountEntryTests(TestCase):
         'agree': 'on',
     }
 
-    def test_signup_starts_a_session_and_routes_to_first_friend(self):
+    def test_signup_starts_a_session_at_the_feed_and_can_add_a_friend(self):
         csrf = Client(enforce_csrf_checks=True)
-        self.assertRedirects(csrf.get('/'), '/login/')
+        self.assertRedirects(csrf.get('/'), '/feed/', fetch_redirect_response=False)
+        self.assertRedirects(csrf.get('/feed/'), '/login/?next=/feed/')
         self.assertContains(csrf.get('/login/'), 'href="/signup/"')
         form = csrf.get('/signup/')
         self.assertTemplateUsed(form, 'accounts/signup.html')
@@ -32,7 +34,7 @@ class AccountEntryTests(TestCase):
 
         start = timezone.now()
         response = csrf.post('/signup/', {**self.signup_data, 'csrfmiddlewaretoken': csrf.cookies['csrftoken'].value})
-        self.assertRedirects(response, '/', fetch_redirect_response=False)
+        self.assertRedirects(response, '/feed/')
         user = User.objects.get()
         self.assertEqual(csrf.session[SESSION_KEY], str(user.pk))
         self.assertTrue(user.check_password(self.signup_data['password1']))
@@ -41,15 +43,17 @@ class AccountEntryTests(TestCase):
         self.assertLessEqual(user.agreed_at, timezone.now())
         self.assertNotIn('birth_date', [field.name for field in User._meta.fields])
         self.assertFalse(user.friendships.exists())
-        self.assertRedirects(csrf.get('/'), '/discover/')
+        self.assertEqual(csrf.get('/api/feed/').json()['posts'], [])
+        self.assertContains(csrf.get('/discover/'), 'data-friends-page="discover"')
         character = Character.objects.create(name='도현', age=23)
         added = csrf.post(
             '/api/friends/', {'character_id': character.pk}, content_type='application/json',
             HTTP_X_CSRFTOKEN=csrf.cookies['csrftoken'].value,
         )
         self.assertEqual(added.status_code, 201)
-        self.assertRedirects(csrf.get('/'), '/home/')
+        self.assertContains(csrf.get('/home/'), 'data-friends-page="home"')
         room_id = added.json()['room_id']
+        self.assertContains(csrf.get(f'/chat/{room_id}/'), f'data-room-id="{room_id}"')
         self.assertEqual(csrf.get(f'/api/characters/{character.pk}/profile/').json()['room_id'], room_id)
         self.assertFalse(csrf.get(f'/api/rooms/{room_id}/memories/').json()['enabled'])
 
@@ -60,7 +64,7 @@ class AccountEntryTests(TestCase):
             with self.subTest(now=utc_now), patch('django.utils.timezone.now', return_value=utc_now):
                 response = self.client.post('/signup/', {**self.signup_data, 'birth_date': birth_date})
                 if eligible:
-                    self.assertRedirects(response, '/', fetch_redirect_response=False)
+                    self.assertRedirects(response, '/feed/', fetch_redirect_response=False)
                     self.assertEqual(User.objects.get().birth_year, 2008)
                 else:
                     self.assertIn('birth_date', response.context['form'].errors)
@@ -89,13 +93,13 @@ class AccountEntryTests(TestCase):
 
     def test_login_and_signup_only_return_to_same_origin(self):
         for index, (target, destination, secure) in enumerate([
-            ('/feed/?cursor=abc', '/feed/?cursor=abc', True),
+            ('/messages/?room=42&filter=unread', '/messages/?room=42&filter=unread', True),
             ('https://testserver/discover/', 'https://testserver/discover/', True),
-            ('https://elsewhere.example/', '/', True),
-            ('//elsewhere.example/path', '/', False),
-            ('https://testserver/feed/', '/', False),
-            ('http://testserver/feed/', '/', True),
-            ('https://testserver:9999/feed/', '/', True),
+            ('https://elsewhere.example/', '/feed/', True),
+            ('//elsewhere.example/path', '/feed/', False),
+            ('https://testserver/messages/', '/feed/', False),
+            ('http://testserver/messages/', '/feed/', True),
+            ('https://testserver:9999/messages/', '/feed/', True),
         ]):
             username = f'visitor{index}'
             signup = {**self.signup_data, 'username': username, 'next': target}
@@ -104,13 +108,19 @@ class AccountEntryTests(TestCase):
                 with self.subTest(url=url, target=target):
                     client = Client()
                     form = client.get(url, {'next': target}, secure=secure)
-                    self.assertEqual(form.context['next'], '' if destination == '/' else target)
+                    switch = '/signup/' if url == '/login/' else '/login/'
+                    if destination == target:
+                        self.assertEqual(form.context['next'], target)
+                        self.assertContains(form, f'href="{switch}?next={quote(target)}"')
+                    else:
+                        self.assertEqual(form.context['next'], '')
+                        self.assertContains(form, f'href="{switch}"')
                     response = client.post(url, data, secure=secure)
                     self.assertEqual(response.status_code, 302)
                     self.assertEqual(response.url, destination)
                     self.assertIn(SESSION_KEY, client.session)
 
-    def test_existing_account_can_log_in_and_route_by_owned_rooms(self):
+    def test_existing_account_defaults_to_feed_regardless_of_friendships(self):
         user = User.objects.create_user('existing', password='existing-password')
         other = User.objects.create_user('other')
         character = Character.objects.create(name='서윤', age=22)
@@ -119,26 +129,33 @@ class AccountEntryTests(TestCase):
         self.assertIsNone(user.agreed_at)
         self.assertRedirects(
             self.client.post('/login/', {'username': 'existing', 'password': 'existing-password'}),
-            '/', fetch_redirect_response=False,
+            '/feed/',
         )
-        self.assertRedirects(self.client.get('/'), '/discover/')
+        self.assertRedirects(self.client.get('/'), '/feed/')
         Friendship.objects.create(user=user, character=character)
-        self.assertRedirects(self.client.get('/'), '/home/')
+        self.assertRedirects(self.client.get('/'), '/feed/')
 
     def test_browser_pages_require_login_and_only_show_owned_profiles(self):
         character = Character.objects.create(name='도현', age=23)
         profile = f'/people/{character.pk}/'
-        for url in ['/home/', '/discover/', profile]:
+        for url in ['/home/', '/messages/', '/discover/', profile]:
             self.assertRedirects(self.client.get(url), '/login/?next=' + url)
         user = User.objects.create_user('first')
         self.client.force_login(user)
         Friendship.objects.create(user=User.objects.create_user('other'), character=character)
         self.assertEqual(self.client.get(profile).status_code, 404)
         Friendship.objects.create(user=user, character=character)
-        for url, page in [('/home/', 'home'), ('/discover/', 'discover'), (profile, 'profile')]:
+        for url, page, title in [
+            ('/home/', 'home', '친구 홈'),
+            ('/messages/', 'messages', '메시지'),
+            ('/discover/', 'discover', '친구 찾기'),
+            (profile, 'profile', '친구 프로필'),
+        ]:
             with self.subTest(page=page):
                 response = self.client.get(url)
                 self.assertTemplateUsed(response, 'accounts/friends.html')
-                self.assertEqual(response.context['page'], page)
+                self.assertContains(response, f'data-friends-page="{page}"')
+                self.assertContains(response, f'<title>{title} · wassup</title>')
+                self.assertNotContains(response, 'data-can-publish')
                 if page == 'profile':
                     self.assertEqual(response.context['character_id'], character.pk)

@@ -1,6 +1,4 @@
 .entry { color:#232920; background:#f5f6f0; min-height:100dvh }
-.people-logo { font:1000 39px/.95 "Arial Rounded MT Bold","Arial Black",Arial,sans-serif; letter-spacing:-4px; text-decoration:none }
-.people-logo span { color:#719624 }
 .people-primary,.people-secondary { display:inline-flex; justify-content:center; align-items:center; gap:8px; padding:11px 17px; border-radius:13px; font-size:14px; font-weight:750; text-decoration:none; line-height:1.35; min-height:44px }
 .people-primary { color:#253017; background:#d4f462 }
 .people-primary:hover { background:#c9e953 }
@@ -30,17 +28,7 @@
 
 
 .people { min-height:100dvh; color:var(--ws-ink); background:var(--ws-paper); }
-.people-header { border-bottom:1px solid var(--ws-line); background:var(--ws-surface); }
-.people-header>div { display:flex; align-items:center; justify-content:space-between; gap:16px; max-width:1032px; min-height:76px; margin:auto; padding:12px 28px; }
-.people-header .people-logo { color:var(--ws-ink); font-size:38px; }
-.people-header .people-logo span { color:#71912c; }
-.people-header nav { display:flex; align-items:center; gap:3px; }
-.people-header nav a,.people-header nav button { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:44px; padding:0 12px; border-radius:12px; color:var(--ws-muted); font-size:13px; font-weight:700; text-decoration:none; white-space:nowrap; }
-.people-header nav [aria-current="page"] { color:var(--ws-ink); background:#eef2e6; }
-.people-header nav a:hover,.people-header nav button:hover { background:#f0f3ea; }
-.people-header nav form { border-left:1px solid var(--ws-line); margin-left:7px; padding-left:6px; }
-.people-header nav button { width:44px; padding:0; }
-.people-main { max-width:1032px; margin:auto; padding:clamp(32px,5vw,64px) 28px max(64px,env(safe-area-inset-bottom)); }
+.people-main { width:100%; max-width:1032px; margin:auto; padding:clamp(32px,5vw,64px) 28px max(64px,env(safe-area-inset-bottom)); }
 .people-main>h1,.people-heading { margin:0 0 23px; }
 .people-heading,.home-section-title,.home-latest-by { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .people-main .people-heading h1,.people-discover>h1 { font-size:clamp(32px,4.4vw,51px); line-height:1.12; letter-spacing:-.075em; }
@@ -100,11 +88,6 @@
   .entry-photo .people-logo { font-size:34px }
   .entry-panel { padding:25px 22px max(28px,env(safe-area-inset-bottom)) }
 
-  .people-header>div { min-height:60px; padding:8px max(10px,env(safe-area-inset-right)) 8px max(16px,env(safe-area-inset-left)); gap:8px; }
-  .people-header .people-logo { font-size:30px; letter-spacing:-3.3px; }
-  .people-header nav { gap:1px; }
-  .people-header nav a { gap:4px; padding:0 8px; font-size:12px; }
-  .people-header nav form { margin-left:2px; padding-left:2px; }
   .people-main { padding:29px 16px max(48px,env(safe-area-inset-bottom)); }
   .people-heading { margin-bottom:19px; }
   .home-friend { padding-top:15px; }
@@ -115,12 +98,4 @@
   .discovery-foot>p { flex:1; margin-top:4px; font-size:13px }
   .discovery-foot .people-primary,.discovery-foot .people-secondary { min-height:40px; padding:8px }
 
-}
-@media(max-width:420px) {
-  .people-header nav a>svg { display:none; }
-  .people-header nav a { padding-inline:7px; }
-}
-@media(max-width:375px) {
-  .people-nav-prefix { display:none; }
-  .people-header>div { gap:4px; }
 }

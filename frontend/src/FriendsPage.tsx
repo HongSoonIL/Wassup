@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react'
-import { ArrowRight, ArrowUpRight, ChevronRight, House, Images, LogOut, MessageCircle, Plus, UsersRound } from 'lucide-react'
-import { getFriends, getProfile, messagePreview, request } from './chat'
+import { ArrowRight, ChevronRight, MessageCircle, Plus, UsersRound } from 'lucide-react'
+import { getProfile, messagePreview, request } from './chat'
 import type { Friend, Profile } from './chat'
 import FriendMemory from './FriendMemory'
 import FriendPortrait from './FriendPortrait'
 import RoomSettings from './RoomSettings'
 import { FriendIdentity } from './SocialMedia'
 import ProfileBody from './ProfileBody'
+import { UserNav, useFriendsOverview } from './UserNav'
+import type { OverviewFriend } from './UserNav'
+import { usePageData } from './usePageData'
 import './people.css'
 
 type Person = Friend['character'] & { room_id: number | null }
@@ -18,41 +21,15 @@ const date = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: '
 const day = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', year: 'numeric', month: 'numeric', day: 'numeric' })
 const clock = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
 
-function usePageData<T>(load: () => Promise<T>, refreshWhileOpen = false) {
-  const [data, setData] = useState<T | null>(null)
-  const [error, setError] = useState('')
-  const [attempt, setAttempt] = useState(0)
-  useEffect(() => {
-    let version = 0
-    async function refresh() {
-      if (document.hidden) return
-      const current = ++version
-      try {
-        const next = await load()
-        if (current === version) { setData(next); setError('') }
-      } catch (e) {
-        if (current === version) setError((e as Error).message)
-      }
-    }
-    void refresh()
-    const restored = (event: PageTransitionEvent) => { if (event.persisted) void refresh() }
-    window.addEventListener('pageshow', restored)
-    document.addEventListener('visibilitychange', refresh)
-    const timer = refreshWhileOpen ? window.setInterval(refresh, 15000) : undefined
-    return () => {
-      version++
-      window.removeEventListener('pageshow', restored)
-      document.removeEventListener('visibilitychange', refresh)
-      window.clearInterval(timer)
-    }
-  }, [load, refreshWhileOpen, attempt])
-  const notice = error ? <div role="alert" className="people-alert">{error} <button onClick={() => setAttempt(n => n + 1)}>다시 시도</button></div>
-    : !data ? <p role="status" className="people-note">불러오는 중…</p> : null
-  return { data, notice }
+function PageNotice({ data, error, retry }: { data: unknown; error: string; retry: () => void }) {
+  if (error) return <div role="alert" className="people-alert">{error} <button onClick={retry}>다시 시도</button></div>
+  if (!data) return <p role="status" className="people-note">불러오는 중…</p>
+  return null
 }
 
 function Discover() {
-  const { data, notice } = usePageData(discover)
+  const result = usePageData(discover)
+  const { data } = result
   const [adding, setAdding] = useState<number | null>(null)
   const [error, setError] = useState('')
   async function add(person: Person) {
@@ -71,7 +48,7 @@ function Discover() {
   }
   return <>
     <h1>친구 찾기</h1>
-    {notice}{error && <p role="alert" className="people-alert">{error}</p>}
+    <PageNotice {...result}/>{error && <p role="alert" className="people-alert">{error}</p>}
     {data && !data.characters.length && <p className="people-empty">지금은 추가할 친구가 없어요.</p>}
     <div className="discovery-grid">{data?.characters.map(person => <article className="discovery-card" key={person.id}>
       <FriendPortrait person={person} className="discovery-photo"/>
@@ -87,7 +64,7 @@ function Discover() {
   </>
 }
 
-function HomeFriend({ friend }: { friend: Friend & { current_activity?: string | null } }) {
+function HomeFriend({ friend }: { friend: OverviewFriend }) {
   const person = friend.character
   const last = friend.last_message
   const sent = last && new Date(last.created_at)
@@ -109,11 +86,12 @@ function HomeFriend({ friend }: { friend: Friend & { current_activity?: string |
 }
 
 function RecentPost() {
-  const { data, notice } = usePageData(getFeed)
+  const result = usePageData(getFeed)
+  const { data } = result
   const post = data?.posts[0]
   return <section className="home-latest" aria-label="최근 소식">
     <div className="home-section-title"><h2>최근 소식</h2><a href="/feed/">피드 전체 보기 <ArrowRight size={15}/></a></div>
-    {notice}
+    <PageNotice {...result}/>
     {data && (post ? <a className="home-latest-card" href={`/feed/#post-${post.id}`}>
       <img src={post.photo.url} alt={post.photo.alt}/>
       <div><span className="home-latest-by"><b>{post.name}</b><time dateTime={post.published_at}>{date.format(new Date(post.published_at))} · {clock.format(new Date(post.published_at))}</time>
@@ -123,11 +101,11 @@ function RecentPost() {
   </section>
 }
 
-function Home() {
-  const { data, notice } = usePageData(getFriends, true)
+function Home({ overview }: { overview: ReturnType<typeof useFriendsOverview> }) {
+  const { data } = overview
   return <>
     <div className="people-heading"><h1>내 친구</h1><a className="people-secondary" href="/discover/"><Plus size={16}/>친구 찾기</a></div>
-    {notice}
+    <PageNotice {...overview}/>
     {data && (!data.friends.length
       ? <div className="people-empty"><UsersRound/><p>첫 친구를 추가해 보세요.</p><a href="/discover/">친구 찾기 <ArrowRight size={15}/></a></div>
       : <div className="home-columns"><ul className="home-friends" aria-label="내 친구">{data.friends.map(friend => <HomeFriend key={friend.room_id} friend={friend}/>)}</ul><RecentPost/></div>)}
@@ -154,20 +132,8 @@ export function PersonProfile({ characterId, load = getProfile }: { characterId:
   </ProfileBody>
 }
 
-export function PeopleHeader({ page, canPublish }: { page: string; canPublish?: boolean }) {
-  return <header className="people-header"><div>
-    <a className="people-logo" href="/" aria-label="wassup 홈">wassup<span>.</span></a>
-    <nav aria-label="서비스 메뉴">
-      <a href="/home/" aria-label="친구 홈" aria-current={page === 'home' ? 'page' : undefined}><House size={16}/><span><span className="people-nav-prefix">친구 </span>홈</span></a>
-      <a href="/feed/" aria-label="친구 피드" aria-current={page === 'feed' ? 'page' : undefined}><Images size={16}/><span><span className="people-nav-prefix">친구 </span>피드</span></a>
-      {canPublish && <a href="/studio/" className="people-studio">주간 발행<ArrowUpRight size={13}/></a>}
-      <form method="post" action="/logout/"><input type="hidden" name="csrfmiddlewaretoken" value={document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/)?.[1] || ''}/>
-        <button aria-label="로그아웃" title="로그아웃"><LogOut size={17}/></button></form>
-    </nav>
-  </div></header>
-}
-
-export default function FriendsPage({ page, characterId, canPublish }: { page: string; characterId: number; canPublish: boolean }) {
+export default function FriendsPage({ page, characterId }: { page: string; characterId: number }) {
+  const overview = useFriendsOverview()
   useEffect(() => {
     if (page !== 'profile') return
     // A reload on a feed-opened profile serves this standalone Django entry.
@@ -178,8 +144,11 @@ export default function FriendsPage({ page, characterId, canPublish }: { page: s
     window.addEventListener('popstate', restore)
     return () => window.removeEventListener('popstate', restore)
   }, [page, characterId])
-  return <div className="people"><PeopleHeader page={page} canPublish={canPublish}/>
-    <main className={'people-main people-'+page}>{page === 'discover' ? <Discover/> : page === 'profile'
-      ? <PersonProfile key={characterId} characterId={characterId}/> : <Home/>}</main>
+  return <div className="people">
+    <div className="user-layout">
+      <UserNav page={page} unreadCount={overview.unreadCount}/>
+      <main className={'people-main people-'+page}>{page === 'discover' ? <Discover/> : page === 'profile'
+        ? <PersonProfile key={characterId} characterId={characterId}/> : <Home overview={overview}/>}</main>
+    </div>
   </div>
 }

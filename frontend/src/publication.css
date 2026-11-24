@@ -310,7 +310,37 @@
 .feed-refresh { flex: none; border: 1px solid var(--ws-line); background: var(--ws-surface); }
 .feed-refresh:hover,.feed-profile-close:hover { background: #edf1e7; }
 .feed-refresh:disabled { opacity: .55; }
-.feed-posts { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 24px; align-items: start; }
+.feed-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 620px) minmax(200px, 300px);
+  justify-content: center;
+  align-items: start;
+  gap: clamp(20px, 3.6vw, 52px);
+  padding-inline: clamp(20px, 3vw, 42px);
+}
+.feed-main.people-main { max-width: 620px; padding-inline: 0; }
+.feed-posts { display: grid; gap: 24px; }
+.feed-friends {
+  position: sticky;
+  top: clamp(32px, 5vw, 64px);
+  max-height: calc(100dvh - clamp(32px, 5vw, 64px) - 18px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 17px;
+  background: var(--ws-surface);
+  border: 1px solid var(--ws-line);
+  border-radius: var(--ws-radius);
+}
+.feed-friends h2 { margin: 0 0 10px; font-size: 19px; font-weight: 800; letter-spacing: -.045em; }
+.feed-friends-list { margin: 0; padding: 0; list-style: none; }
+.feed-friends-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px; padding-block: 9px; }
+.feed-friends-list li + li { border-top: 1px solid var(--ws-line); }
+.feed-friends-list li > a:first-child { display: flex; align-items: center; min-width: 0; min-height: 44px; border-radius: 8px; }
+.feed-friends-list .ws-identity { gap: 8px; }
+.feed-friends-list .avatar { width: 38px; height: 38px; }
+.feed-friends-list .ws-identity-detail { font-size: 12px; overflow-wrap: anywhere; }
+.feed-friend-chat { display: grid; place-items: center; min-width: 44px; min-height: 44px; border-radius: 50%; color: var(--ws-muted); }
+.feed-friend-chat:hover { color: var(--ws-ink); background: #edf1e7; }
 .feed-post {
   min-width: 0;
   overflow: hidden;
@@ -359,9 +389,13 @@ dialog.feed-profile-dialog[open] { animation: feed-profile-appear var(--ws-overl
 @media (prefers-reduced-motion: reduce) {
   dialog.feed-profile-dialog[open] { animation: none; }
 }
+@media (max-width: 840px), (pointer: coarse) and (max-height: 520px) {
+  .feed-layout { display: block; padding-inline: max(16px, env(safe-area-inset-left)) max(16px, env(safe-area-inset-right)); }
+  .feed-friends { display: none; }
+}
 @media (max-width: 680px) {
-  .feed-posts { grid-template-columns: 1fr; gap: 19px; }
-  .feed-main { max-width: 540px; }
+  .feed-posts { gap: 19px; }
+  .feed-main.people-main { max-width: 540px; }
   .feed-post-head { padding: 11px 14px; }
   .feed-post-foot { padding: 14px 15px 15px; }
   dialog.feed-profile-dialog { inset: auto 0 0; margin: 0 auto; width: min(100%,540px); max-height: calc(100dvh - max(18px,env(safe-area-inset-top))); border-radius: 22px 22px 0 0; border-bottom: 0; }

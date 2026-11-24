@@ -14,27 +14,31 @@ button:focus-visible,a:focus-visible,textarea:focus-visible { outline:2px solid 
 .avatar { width:45px; height:45px; border-radius:16px; object-fit:cover; object-position:50% 36%; flex-shrink:0; background:#dce5c7 }
 .initials { display:grid; place-items:center; color:#485437; font-weight:bold }
 
+.messaging { display:grid; grid-template-rows:minmax(0,1fr); align-items:stretch; height:100dvh; min-height:0; background:var(--ws-paper) }
 .shell {
   display:grid; grid-template-columns:clamp(254px,26%,324px) minmax(0,1fr); width:min(1230px,calc(100% - 48px));
-  height:calc(100dvh - 48px); margin:24px auto; overflow:hidden; background:var(--ws-surface); color:var(--ws-ink);
+  min-height:0; margin:24px auto; overflow:hidden; background:var(--ws-surface); color:var(--ws-ink);
   border:1px solid var(--ws-line); border-radius:23px; box-shadow:0 8px 36px #3840220b;
 }
-.side { min-height:0; padding:28px 16px 18px; border-right:1px solid var(--ws-line); display:flex; flex-direction:column }
+.side { min-height:0; padding:24px 16px 18px; border-right:1px solid var(--ws-line); display:flex; flex-direction:column }
 .brand { display:block; font:1000 43px/1 "Arial Rounded MT Bold","Arial Black",Arial,sans-serif; letter-spacing:-4.3px; margin:0 11px 40px }
 .brand-dot { color:#72932d }
-.side-heading { display:flex; align-items:center; gap:8px; margin:0 10px 9px }
-.side-heading h2 { font-weight:800; font-size:19px; letter-spacing:-.7px }
-.side-heading>span { font-size:11px; font-weight:700; background:#f0f2eb; color:var(--ws-muted); border-radius:12px; padding:1px 7px }
-.side-heading a { display:inline-flex; align-items:center; gap:3px; min-height:44px; margin-left:auto; color:var(--ws-muted); font-size:12px; font-weight:650 }
-.side nav { flex:1; overflow:auto; overscroll-behavior:contain }
+.side-heading { margin:0 10px 12px }
+.side-heading :is(h1,h2) { font-weight:800; font-size:24px; letter-spacing:-.9px }
+.side nav { flex:1; overflow:auto; overscroll-behavior:contain; scrollbar-width:thin; padding:4px }
 .friend-row { color:inherit; text-decoration:none; display:flex; align-items:center; gap:8px; padding:13px 10px; border-radius:15px; margin-bottom:3px }
-.friend-row.selected { background:#eff3e7 }
 .friend-row:hover { background:#f3f5ee }
+.friend-row.selected { background:#eff3e7 }
 .friend-row .ws-identity { flex:1; }
 .friend-row .ws-identity strong { font-size:15px }
 .friend-row .ws-identity-detail,.chat-activity { overflow:hidden; white-space:nowrap; text-overflow:ellipsis }
-.row-meta { align-self:flex-start; display:grid; justify-items:end; gap:4px; color:var(--ws-muted); font-size:11px; font-variant-numeric:tabular-nums }
-.row-meta em { min-width:19px; text-align:center; background:var(--ws-lime); border-radius:12px; padding:1px 5px; font-weight:700; font-style:normal }
+.row-meta { align-self:flex-start; display:grid; justify-items:end; gap:4px; color:var(--ws-muted); font-size:11px; font-variant-numeric:tabular-nums; white-space:nowrap }
+.room-unread { min-width:19px; text-align:center; color:var(--ws-ink); background:var(--ws-lime); border-radius:12px; padding:1px 5px; font-weight:750 }
+.inbox-notice,.inbox-empty { padding:11px 10px; color:var(--ws-muted); font-size:14px }
+.inbox-notice button { margin-inline-start:3px; text-decoration:underline; text-underline-offset:3px }
+.inbox-empty a { display:inline-flex; align-items:center; gap:6px; min-height:44px; font-weight:700; color:var(--ws-ink) }
+.inbox-placeholder { display:grid; place-content:center; justify-items:center; gap:12px; padding:24px; text-align:center; color:var(--ws-muted); background:var(--ws-paper); font-size:15px }
+.inbox-placeholder svg { box-sizing:content-box; padding:13px; color:#586d3f; background:#eaf0e2; border-radius:50% }
 .side-photo { margin:24px 8px 8px }
 .side-photo h3 { font-size:13px; font-weight:700; margin:0 0 9px }
 .side-photo .side-photo-button { width:100%; aspect-ratio:1.95; border-radius:14px }
@@ -128,12 +132,17 @@ button:focus-visible,a:focus-visible,textarea:focus-visible { outline:2px solid 
 .profile-load { padding:30px 20px }
 .profile-load button { padding:8px; text-decoration:underline }
 
-@media (max-width:720px), (pointer:coarse) and (max-height:520px) {
-  html:has(.shell),body:has(.shell) { overflow:hidden; overscroll-behavior:none }
-  .shell { position:fixed; top:var(--chat-top,0px); right:0; left:0; width:100%; height:var(--chat-height,100dvh); margin:0; border:0; border-radius:0; display:block; box-shadow:none }
+@media (max-width:840px), (pointer:coarse) and (max-height:520px) {
+  html:has(.messaging),body:has(.messaging) { overflow:hidden; overscroll-behavior:none }
+  .messaging { position:fixed; top:var(--chat-top,0px); inset-inline:0; height:var(--chat-height,100dvh); display:flex; flex-direction:column }
+  .messaging:not(.inbox-page) > .user-nav { display:none }
+  .shell { width:100%; margin:0; border:0; border-radius:0; display:block; box-shadow:none }
+  .messaging > .shell { flex:1 }
+  .inbox-page > .shell { margin-bottom:var(--user-nav-bottom) }
   .side { display:none; height:100%; padding:max(24px,env(safe-area-inset-top)) max(18px,env(safe-area-inset-right)) max(18px,env(safe-area-inset-bottom)) max(18px,env(safe-area-inset-left)); border:0 }
-  .show-list .side { display:flex }
-  .show-list .chat-pane { display:none }
+  .inbox-page .side,.show-list .side { display:flex }
+  .inbox-page .side { padding-top:max(24px,env(safe-area-inset-top)); padding-bottom:12px }
+  .inbox-placeholder,.show-list .chat-pane { display:none }
   .chat-pane { height:100% }
   .back { display:grid }
   .chat-head { padding:max(8px,env(safe-area-inset-top)) max(7px,env(safe-area-inset-right)) 8px max(2px,env(safe-area-inset-left)); gap:3px; min-height:65px }

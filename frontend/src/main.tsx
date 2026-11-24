@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { ArrowDown, ArrowUp, ArrowUpRight, ChevronLeft, ImageOff, Info, X } from 'lucide-react'
-import { getProfile, markRead, messagePhoto, messagePreview, RequestError } from './chat'
+import { ArrowDown, ArrowUp, ChevronLeft, ImageOff, Info, X } from 'lucide-react'
+import { getProfile, markRead, messagePhoto, RequestError } from './chat'
 import type { Message, Profile, Quote } from './chat'
 import useChatRoom from './useChatRoom'
 import Publication from './Publication'
@@ -9,23 +9,20 @@ import FriendMemory from './FriendMemory'
 import RoomSettings from './RoomSettings'
 import FriendPortrait from './FriendPortrait'
 import FriendsPage from './FriendsPage'
+import { InboxList, InboxPlaceholder, useInbox } from './Inbox'
 import ProfileBody from './ProfileBody'
 import { FriendIdentity, PhotoViewerProvider, PostPhoto } from './SocialMedia'
+import UserNav from './UserNav'
 import './style.css'
 
 const root = document.getElementById('root')!
 const demo = root.dataset.demo === 'true'
-const room = Number(root.dataset.roomId || 1)
 const clock = new Intl.DateTimeFormat('ko-KR', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Asia/Seoul' })
 const calendar = new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short', timeZone: 'Asia/Seoul' })
 const day = (message: Message) => calendar.format(new Date(message.created_at))
 const hour = (message: Message) => clock.format(new Date(message.created_at))
 const atBottom = (el: HTMLElement) => el.scrollHeight - el.clientHeight - el.scrollTop < 24
 const overlayOpen = () => Boolean(history.state?.chatProfile || history.state?.wsPhoto)
-
-function Brand() {
-  return <span className="brand" aria-label="wassup">wassup<span className="brand-dot">.</span></span>
-}
 
 function quotePhotoKey(messageId: number, quote: Extract<Quote, { status: 'available' }>) {
   return `quote:${messageId}:${quote.id}:${quote.version}`
@@ -50,7 +47,7 @@ function updateQuoteUrl(quote: Quote | null) {
   history.replaceState(history.state, '', url)
 }
 
-function Chat() {
+function Chat({ room, inbox }: { room: number; inbox: ReturnType<typeof useInbox> }) {
   const [quote, setQuote] = useState<Quote | null>(() => JSON.parse(document.getElementById('initial-quote')?.textContent || 'null'))
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
@@ -72,7 +69,8 @@ function Chat() {
   const prepend = useRef<{ node: HTMLElement; top: number } | null>(null)
   const pin = useRef(true)
   const fresh = useRef<number[]>([])
-  const seenThrough = useRef(0)
+  const [readThrough, setReadThrough] = useState(0)
+  const reading = useRef(false)
   const lock = useRef(false)
   const pagingLock = useRef(false)
   const quoteRevision = useRef(0)
@@ -84,8 +82,9 @@ function Chat() {
     if (!pin.current || covered) setNewBelow(true)
     if (animate && !covered && !document.hidden) fresh.current.push(...ids)
   }, [])
-  const { friends, messages, ready, more, activity, typing, loadError, send, loadOlder, updateUnread } = useChatRoom(room, demo, onArrival)
-  const friend = friends.find(item => item.room_id === room)
+  const { friends, updatePreview, updateUnread } = inbox
+  const { messages, ready, more, activity, typing, loadError, send, loadOlder } = useChatRoom(room, demo, onArrival, updatePreview)
+  const friend = friends?.find(item => item.room_id === room)
   const character = friend?.character
   const characterId = character?.id
   const name = character?.name || '친구'
@@ -126,14 +125,14 @@ function Chat() {
     if (demo || !thread || listOpen || profileOpen || !ready) return
     const visible = new Set<number>()
     const acknowledge = () => {
-      if (document.hidden || !document.hasFocus() || overlayOpen() || !visible.size) return
+      if (document.hidden || !document.hasFocus() || overlayOpen() || reading.current || !visible.size) return
       const through = Math.max(...visible)
-      if (through <= seenThrough.current) return
-      const previous = seenThrough.current
-      seenThrough.current = through
+      reading.current = true
       markRead(room, through).then(({ unread_count }) => {
-        if (seenThrough.current === through) updateUnread(unread_count)
-      }).catch(() => { if (seenThrough.current === through) seenThrough.current = previous })
+        setReadThrough(through)
+        updateUnread(room, unread_count)
+      }).catch(() => { /* A later observation or room refresh can retry. */ })
+        .finally(() => { reading.current = false })
     }
     const observer = new IntersectionObserver(entries => {
       for (const entry of entries) {
@@ -153,34 +152,20 @@ function Chat() {
       window.removeEventListener('popstate', acknowledge)
       document.removeEventListener('visibilitychange', acknowledge)
     }
-  }, [messages, listOpen, profileOpen, ready, updateUnread])
+  }, [messages, listOpen, profileOpen, ready, room, readThrough, updateUnread])
 
   useLayoutEffect(() => {
     const thread = scroll.current
-    const viewport = window.visualViewport
-    const style = document.documentElement.style
-    const compact = window.matchMedia('(max-width:720px), (pointer:coarse) and (max-height:520px)')
+    const compact = window.matchMedia('(max-width:840px), (pointer:coarse) and (max-height:520px)')
     const layoutChanged = () => { if (!compact.matches) setListOpen(false) }
-    const resize = () => {
-      if (!viewport || viewport.scale !== 1) return
-      style.setProperty('--chat-height', viewport.height + 'px')
-      style.setProperty('--chat-top', viewport.offsetTop + 'px')
-    }
-    resize()
-    viewport?.addEventListener('resize', resize)
-    viewport?.addEventListener('scroll', resize)
     compact.addEventListener('change', layoutChanged)
     const observer = new ResizeObserver(() => {
       if (thread?.clientHeight && pin.current && !overlayOpen() && profileScroll.current === null) thread.scrollTop = thread.scrollHeight
     })
     if (thread) observer.observe(thread)
     return () => {
-      viewport?.removeEventListener('resize', resize)
-      viewport?.removeEventListener('scroll', resize)
       compact.removeEventListener('change', layoutChanged)
       observer.disconnect()
-      style.removeProperty('--chat-height')
-      style.removeProperty('--chat-top')
     }
   }, [])
 
@@ -292,29 +277,16 @@ function Chat() {
   const displayedProfile: Profile | null = demo && character
     ? { ...character, room_id: room, current_activity: activity, next_cursor: null, posts: [] } : profile
 
-  return <PhotoViewerProvider resolvePhoto={resolvePhoto} loading={!ready && !loadError}><main className={'shell ' + (listOpen ? 'show-list' : '')}>
-    <aside className="side" aria-label="대화 목록">
-      {demo ? <Brand/> : <a href="/home/" aria-label="친구 홈"><Brand/></a>}
-      <div className="side-heading"><h2>대화</h2><span>{friends.length}</span>
-        {!demo && <a href="/feed/">친구 피드 <ArrowUpRight size={14}/></a>}</div>
-      <nav>{friends.map(f => {
-        const selected = f.room_id === room
-        const last = selected ? messages.at(-1) || f.last_message : f.last_message
-        return <a key={f.room_id} className={'friend-row ' + (selected ? 'selected' : '')}
-          href={demo ? '#' : '/chat/' + f.room_id + '/'} aria-current={selected ? 'page' : undefined}
-          onClick={e => { if (selected) { e.preventDefault(); setListOpen(false) } }}>
-          <FriendIdentity person={f.character} detail={messagePreview(last, '첫 메시지를 보내 보세요')}/>
-          <span className="row-meta">{last && <time dateTime={last.created_at}>{hour(last)}</time>}
-            {f.unread_count > 0 && <em aria-label={'안 읽은 메시지 ' + f.unread_count + '개'}>{f.unread_count}</em>}</span>
-        </a>
-      })}</nav>
+  return <PhotoViewerProvider resolvePhoto={resolvePhoto} loading={!ready && !loadError}><main className={'shell room-selected' + (listOpen ? ' show-list' : '')}>
+    <InboxList {...inbox} room={room} demo={demo} onDemoSelect={() => setListOpen(false)}>
       {latestPhoto && <section className="side-photo"><h3>대화 속 사진</h3>
         <PostPhoto {...latestPhoto} key={latestPhoto.viewerKey} className="side-photo-button"/></section>}
-      {demo && <small className="preview-note">샘플 대화 미리보기</small>}
-    </aside>
+    </InboxList>
     <section className="chat-pane" aria-label={name + ' 채팅방'}>
       <header className="chat-head">
-        <button className="back icon-button" aria-label="대화 목록" onClick={() => setListOpen(true)}><ChevronLeft size={23}/></button>
+        {demo
+          ? <button className="back icon-button" aria-label="대화 목록" onClick={() => setListOpen(true)}><ChevronLeft size={23}/></button>
+          : <a className="back icon-button" href="/messages/" aria-label="대화 목록"><ChevronLeft size={23}/></a>}
         <button className="chat-person" aria-label={name + ' 프로필'} aria-haspopup="dialog" onClick={e => openProfile(e.currentTarget)}>
           <FriendIdentity person={character} detail={<>{status && <span className="chat-activity">{status}</span>}
             <span className="chat-kind">AI 친구{demo ? ' · 미리보기' : root.dataset.sampleReplies === 'true' ? ' · 샘플 답장' : ''}</span></>}/>
@@ -345,7 +317,7 @@ function Chat() {
                 <div className="message-body">
                   {!own && start && <b className="speaker">{name}</b>}
                   <div className="bubble-row">
-                    <div data-unread={!own && !m.read_at ? m.id : undefined} className={'bubble' + (photoBubble ? ' with-photo' : '')}>
+                    <div data-unread={!own && !m.read_at && m.id > readThrough ? m.id : undefined} className={'bubble' + (photoBubble ? ' with-photo' : '')}>
                       {m.source_post && <QuotePreview quote={m.source_post} name={name} messageId={m.id}/>}
                       {photo ? <PostPhoto {...photo} key={photo.viewerKey} className="message-photo"/> : photoBubble &&
                         <span className="message-photo message-photo-unavailable"><ImageOff size={20} aria-hidden="true"/>이 사진은 볼 수 없어요.</span>}
@@ -400,12 +372,41 @@ function Chat() {
     </dialog>
   </main></PhotoViewerProvider>
 }
+
+function Messaging({ room }: { room?: number }) {
+  const inbox = useInbox(demo)
+  useLayoutEffect(() => {
+    const viewport = window.visualViewport
+    if (!viewport) return
+    const style = document.documentElement.style
+    const resize = () => {
+      if (viewport.scale !== 1) return
+      style.setProperty('--chat-height', viewport.height + 'px')
+      style.setProperty('--chat-top', viewport.offsetTop + 'px')
+    }
+    resize()
+    viewport.addEventListener('resize', resize)
+    viewport.addEventListener('scroll', resize)
+    return () => {
+      viewport.removeEventListener('resize', resize)
+      viewport.removeEventListener('scroll', resize)
+      style.removeProperty('--chat-height')
+      style.removeProperty('--chat-top')
+    }
+  }, [])
+  const unreadCount = inbox.friends?.reduce((total, friend) => total + friend.unread_count, 0) ?? 0
+  return <div className={'messaging' + (demo ? '' : ' user-layout user-layout--viewport') + (room === undefined ? ' inbox-page' : '')}>
+    {!demo && <UserNav page="messages" unreadCount={unreadCount}/>}
+    {room === undefined ? <main className="shell"><InboxList {...inbox}/><InboxPlaceholder hasConversations={Boolean(inbox.friends?.length)}/></main>
+      : <Chat room={room} inbox={inbox}/>}
+  </div>
+}
+
 const page = root.dataset.friendsPage
 const publication = root.dataset.publication
-const canPublish = root.dataset.canPublish === 'true'
-createRoot(root).render(page || publication
+createRoot(root).render(page === 'messages' ? <Messaging/> : page || publication
   ? <PhotoViewerProvider>{page
-    ? <FriendsPage page={page} characterId={Number(root.dataset.characterId)} canPublish={canPublish}/>
-    : <Publication studio={publication === 'studio'} canPublish={canPublish}/>
+    ? <FriendsPage page={page} characterId={Number(root.dataset.characterId)}/>
+    : <Publication studio={publication === 'studio'}/>
   }</PhotoViewerProvider>
-  : <Chat/>)
+  : <Messaging room={Number(root.dataset.roomId || 1)}/>)

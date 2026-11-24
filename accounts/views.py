@@ -6,6 +6,7 @@ from django.contrib.auth.views import LoginView
 from django.db import IntegrityError, transaction
 from django.http import HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -27,7 +28,7 @@ def safe_next(request):
 
 class SessionLoginView(LoginView):
     template_name = 'dashboard/login.html'
-    next_page = '/'
+    next_page = 'feed'
 
     def get_redirect_url(self):
         return safe_next(self.request)
@@ -35,9 +36,7 @@ class SessionLoginView(LoginView):
 
 @require_GET
 def entry(request):
-    if not request.user.is_authenticated:
-        return redirect('login')
-    return redirect('home' if request.user.friendships.exists() else 'discover')
+    return redirect('feed')
 
 
 @sensitive_post_parameters('password1', 'password2', 'birth_date')
@@ -45,8 +44,9 @@ def entry(request):
 @require_http_methods(['GET', 'POST'])
 def signup(request):
     target = safe_next(request)
+    destination = target or reverse('feed')
     if request.user.is_authenticated:
-        return HttpResponseRedirect(target or '/')
+        return HttpResponseRedirect(destination)
     form = SignupForm(request.POST if request.method == 'POST' else None)
     if form.is_valid():
         try:
@@ -58,7 +58,7 @@ def signup(request):
             form.add_error('username', form.instance.unique_error_message(User, ['username']))
         else:
             login(request, user)
-            return HttpResponseRedirect(target or '/')
+            return HttpResponseRedirect(destination)
     return render(request, 'accounts/signup.html', {'form': form, 'next': target})
 
 

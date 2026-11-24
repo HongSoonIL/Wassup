@@ -4,11 +4,12 @@ import { ArrowUpRight, CalendarDays, Check, ChevronDown, HeartHandshake, Image a
 import './publication.css'
 import { getProfile, returnToLogin } from './chat'
 import type { Friend, PostSummary, Profile } from './chat'
-import { discover, getFeed, PeopleHeader, PersonProfile } from './FriendsPage'
+import { getFeed, PersonProfile } from './FriendsPage'
 import type { FeedPage } from './FriendsPage'
 import { FriendIdentity, PostPhoto } from './SocialMedia'
 import { isPlainClick } from './ProfileBody'
 import PreviousPost from './PreviousPost'
+import { UserNav, useFriendsOverview } from './UserNav'
 
 type PhotoState = 'idle' | 'queued' | 'generating' | 'ready' | 'failed'
 type Candidate = {
@@ -160,9 +161,9 @@ function FeedProfileDialog({ route, load, openPost }: {
   </dialog>
 }
 
-function Feed() {
+function Feed({ friends }: { friends?: Friend[] }) {
   const [page, setPage] = useState<FeedPage | null>(null)
-  const [people, setPeople] = useState<Map<number, Friend['character']>>(new Map())
+  const people = new Map(friends?.map(friend => [friend.character.id, friend.character]))
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [route, setRoute] = useState(profileRoute)
@@ -206,10 +207,6 @@ function Feed() {
 
   useEffect(() => {
     void load()
-    let active = true
-    discover().then(data => {
-      if (active) setPeople(new Map(data.characters.map(person => [person.id, person])))
-    }).catch(() => { /* The feed still has the public author name. */ })
     const refresh = () => {
       if (!document.hidden && !loadedOlder.current && !profileRoute() && !history.state?.wsPhoto && window.scrollY < 8) void load()
     }
@@ -224,7 +221,6 @@ function Feed() {
     window.addEventListener('hashchange', hashChanged)
     document.addEventListener('visibilitychange', refresh)
     return () => {
-      active = false
       sequence.current++
       loading.current = false
       window.removeEventListener('popstate', restore)
@@ -299,6 +295,43 @@ function Feed() {
     {page?.next_cursor && <button className="profile-more" disabled={busy} onClick={() => void load(page.next_cursor!)}>이전 소식 더 보기<ChevronDown size={16}/></button>}
     {route && <FeedProfileDialog key={route.postId} route={route} load={loadProfile} openPost={openPost}/>}
   </>
+}
+
+function FeedFriends({ overview }: { overview: ReturnType<typeof useFriendsOverview> }) {
+  const { data, error, retry } = overview
+  return <aside className="feed-friends" aria-labelledby="feed-friends-heading">
+    <h2 id="feed-friends-heading">내 친구</h2>
+    {error && <p role="alert" className="people-alert">{error} <button type="button" onClick={retry}>다시 시도</button></p>}
+    {!data && !error && <p role="status" className="people-note">친구 불러오는 중…</p>}
+    {data && (data.friends.length ? <ul className="feed-friends-list">
+      {data.friends.map(friend => {
+        const { character, current_activity: activity } = friend
+        return <li key={friend.room_id}>
+          <a href={`/people/${character.id}/`}>
+            <FriendIdentity person={character} detail={activity
+              ? <span className="home-activity"><i aria-hidden="true"/><span className="ws-sr">현재 활동 </span>{activity}</span>
+              : character.status_message || 'AI 친구'}/>
+          </a>
+          <a className="feed-friend-chat" href={`/chat/${friend.room_id}/`} aria-label={character.name + '에게 말 걸기'}>
+            <MessageCircle size={18} aria-hidden="true"/>
+          </a>
+        </li>
+      })}
+    </ul> : <a className="people-secondary" href="/discover/">친구 찾기</a>)}
+  </aside>
+}
+
+function FeedPageLayout() {
+  const overview = useFriendsOverview()
+  return <div className="people">
+    <div className="user-layout">
+      <UserNav page="feed" unreadCount={overview.unreadCount}/>
+      <div className="feed-layout">
+        <main className="people-main feed-main"><Feed friends={overview.data?.friends}/></main>
+        <FeedFriends overview={overview}/>
+      </div>
+    </div>
+  </div>
 }
 
 function StudioPrevious({ post }: { post: PostSummary }) {
@@ -811,8 +844,8 @@ function Studio() {
   )
 }
 
-export default function Publication({ studio, canPublish }: { studio: boolean; canPublish: boolean }) {
-  if (!studio) return <div className="people"><PeopleHeader page="feed" canPublish={canPublish}/><main className="people-main feed-main"><Feed/></main></div>
+export default function Publication({ studio }: { studio: boolean }) {
+  if (!studio) return <FeedPageLayout/>
   const csrf = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/)?.[1] || ''
   return (
     <div className="pub">

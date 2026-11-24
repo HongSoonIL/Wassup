@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { getFriends, getMessages, mergeMessages, RequestError, sendMessage } from './chat'
-import type { Friend, Message, Quote } from './chat'
+import { getMessages, mergeMessages, RequestError, sendMessage } from './chat'
+import type { Message, Quote } from './chat'
 import { subscribeToRoom } from './live'
-import { sampleFriend, sampleMessages } from './preview'
+import { sampleMessages } from './preview'
 
 type Arrival = (ids: number[], animate: boolean) => void
 
-export default function useChatRoom(room: number, demo: boolean, onArrival: Arrival) {
-  const [friends, setFriends] = useState<Friend[]>(demo ? [sampleFriend] : [])
+export default function useChatRoom(room: number, demo: boolean, onArrival: Arrival, onMessage: (room: number, message: Message) => void) {
   const [messages, setMessages] = useState<Message[]>(demo ? sampleMessages : [])
   const [ready, setReady] = useState(demo)
   const [more, setMore] = useState(false)
@@ -73,7 +72,7 @@ export default function useChatRoom(room: number, demo: boolean, onArrival: Arri
       const through = newest.current
       const historical = new Set([...photosToRefresh.current].sort((a, b) => b - a))
       try {
-        const [history, list] = await Promise.all([getMessages(room), getFriends()])
+        const history = await getMessages(room)
         let page = history
         let batch = history.messages
         while (active && !first && through > 0 && page.has_more && page.messages[0]?.id > through) {
@@ -83,7 +82,6 @@ export default function useChatRoom(room: number, demo: boolean, onArrival: Arri
         if (!active) return
         setActivity(history.current_activity || null)
         if (revision === typingRevision) showTypingUntil(history.typing_until)
-        setFriends(list.friends)
         receive(batch, first ? 'history' : 'snapshot')
         if (first || !through) setMore(history.has_more)
         first = false
@@ -136,6 +134,7 @@ export default function useChatRoom(room: number, demo: boolean, onArrival: Arri
           // Typing belongs to the server's start/stop events. A repeated delivery cannot stop a later bubble.
           if (!known.current.has(event.message.id)) {
             receive([event.message], synchronized ? 'delivery' : first ? 'history' : 'snapshot')
+            onMessage(room, event.message)
           }
           break
         case 'typing.start':
@@ -174,7 +173,7 @@ export default function useChatRoom(room: number, demo: boolean, onArrival: Arri
       window.removeEventListener('pageshow', restored)
       window.removeEventListener('online', resync)
     }
-  }, [room, demo, receive])
+  }, [room, demo, receive, onMessage])
 
   async function loadOlder(before: number, capturePosition: () => void) {
     const page = await getMessages(room, before)
@@ -185,13 +184,16 @@ export default function useChatRoom(room: number, demo: boolean, onArrival: Arri
 
   async function send(text: string, quote: Quote | null) {
     if (!demo) {
-      receive([await sendMessage(room, text, quote)], 'receipt')
+      const message = await sendMessage(room, text, quote)
+      receive([message], 'receipt')
+      onMessage(room, message)
       return
     }
     demoTimers.current.forEach(clearTimeout)
     const sent: Message = { id: demoId.current++, text, created_at: new Date().toISOString(),
       sender: 'user', kind: 'text', status: 'sent', read_at: null, source_post: quote }
     receive([sent], 'receipt')
+    onMessage(room, sent)
     setTyping(false)
     demoTimers.current = [
       window.setTimeout(() => {
@@ -201,13 +203,12 @@ export default function useChatRoom(room: number, demo: boolean, onArrival: Arri
       }, 1000),
       window.setTimeout(() => {
         setTyping(false)
-        receive([{ ...sent, id: demoId.current++, sender: 'character', text: '지금 잠깐 쉬는 중 ㅋㅋ',
-          created_at: new Date().toISOString(), source_post: null }], 'delivery')
+        const reply: Message = { ...sent, id: demoId.current++, sender: 'character', text: '지금 잠깐 쉬는 중 ㅋㅋ',
+          created_at: new Date().toISOString(), source_post: null }
+        receive([reply], 'delivery')
+        onMessage(room, reply)
       }, 2600),
     ]
   }
-  const updateUnread = useCallback((count: number) => {
-    setFriends(old => old.map(friend => friend.room_id === room ? { ...friend, unread_count: count } : friend))
-  }, [room])
-  return { friends, messages, ready, more, activity, typing, loadError, loadOlder, send, updateUnread }
+  return { messages, ready, more, activity, typing, loadError, loadOlder, send }
 }

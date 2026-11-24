@@ -4,7 +4,7 @@ from . import views
 
 urlpatterns = [
     path('studio/', views.studio_page),
-    path('feed/', views.feed_page),
+    path('feed/', views.feed_page, name='feed'),
     path('api/ops/weeks/generate/', views.generate),
     path('api/ops/weeks/<int:week_id>/', views.week_detail),
     path('api/ops/weeks/<int:week_id>/approve/', views.approve_week),
