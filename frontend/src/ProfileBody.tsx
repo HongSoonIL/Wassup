@@ -6,6 +6,7 @@ import { getProfile } from './chat'
 import type { Profile } from './chat'
 import { FriendIdentity, PostPhoto } from './SocialMedia'
 import PreviousPost from './PreviousPost'
+import ProfilePhotoHistory from './ProfilePhotoHistory'
 import './profile.css'
 
 type Post = Profile['posts'][number]
@@ -80,6 +81,7 @@ export default function ProfileBody({ profile, onChat, onQuote, children }: Prof
       <h1 className="profile-name" aria-label={profile.name}>
         <FriendIdentity person={profile} className="profile-identity" detail={<span className="profile-kind">AI 친구</span>}/>
       </h1>
+      <ProfilePhotoHistory name={profile.name} photos={profile.profile_photos ?? []}/>
       <div className="profile-intro">
         {profile.status_message && <p>{profile.status_message}</p>}
         {profile.current_activity && <span className="profile-activity"><i aria-hidden="true"/><span className="sr-only">현재 활동 </span>{profile.current_activity}</span>}

@@ -141,7 +141,10 @@ class PhotoReplyTests(TestCase):
         FeedPost.objects.filter(pk=self.post.pk).update(photo=replacement.photo, version=5)
         self.assertEqual(self.client.get(url).status_code, 404)
         self.assertEqual(self.history().json()['messages'][-1]['attachment'], {'status': 'unavailable'})
-        self.assertEqual(self.client.get(url.rsplit('=', 1)[0] + '=5').status_code, 200)
+        current = self.client.get(url.rsplit('=', 1)[0] + '=5')
+        self.assertEqual(current.status_code, 200)
+        # 끝까지 읽어야 파일이 닫힌다. Windows는 열린 파일을 지우지 못해 임시 폴더 정리가 실패한다.
+        self.assertEqual(b''.join(current.streaming_content), b'replacement')
 
         self.client.force_login(self.stranger)
         self.assertEqual(self.history().status_code, 403)

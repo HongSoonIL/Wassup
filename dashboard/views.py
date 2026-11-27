@@ -285,10 +285,29 @@ def profile(request, character_id):
             'room_id': room.pk,
             'is_ai': True,
             'profile_image': char.profile_image.url if char.profile_image else None,
+            'profile_photos': profile_photos_json(char, now),
             'status_message': char.status_message,
             'current_activity': slot.activity if slot else None,
         }
     )
+
+
+PROFILE_PHOTO_LIMIT = 30
+
+
+def profile_photos_json(char, now):
+    """지난 프사 넘겨 보기 (설계서 2.3절). 최신순이고, 예약해 둔 미래 시각의 프사는 아직 보이지 않는다."""
+    photos = char.profile_photos.filter(set_at__lte=now)[:PROFILE_PHOTO_LIMIT]
+    return [
+        {
+            'id': photo.pk,
+            'url': photo.image.url,
+            'set_at': iso(photo.set_at),
+            'ai_generated': photo.ai_generated,
+            'current': bool(char.profile_image) and photo.image.name == char.profile_image.name,
+        }
+        for photo in photos
+    ]
 
 
 def versioned(posts, request, *, required=False):

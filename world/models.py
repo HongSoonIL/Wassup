@@ -5,6 +5,7 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models import F, Q
 
+from .clock import world_now
 from .publication_models import FeedPost, PostDependency, PostPhoto, PostRevision, PublicationWeek, SchoolEvent
 
 
@@ -35,6 +36,31 @@ class Character(models.Model):
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        previous = None
+        if self.pk:
+            previous = Character.objects.filter(pk=self.pk).values_list('profile_image', flat=True).first()
+        super().save(*args, **kwargs)
+        # 프사를 새로 정하면 그 사진을 이력에 남긴다. 지난 프사는 지우지 않는다.
+        if self.profile_image and self.profile_image.name != previous:
+            self.profile_photos.create(image=self.profile_image.name, set_at=world_now())
+
+
+class ProfilePhoto(models.Model):
+    """공개 층: 캐릭터가 지금까지 쓴 프사. 모든 사용자에게 같은 이력이다 (설계서 2.1절)."""
+
+    character = models.ForeignKey(Character, on_delete=models.CASCADE, related_name='profile_photos')
+    image = models.ImageField('프사', upload_to='characters/profile/')
+    set_at = models.DateTimeField('프사로 바꾼 시각', default=world_now)
+    ai_generated = models.BooleanField('AI 생성 사진', default=True)
+
+    class Meta:
+        verbose_name = verbose_name_plural = '프사 이력'
+        ordering = ['-set_at', '-id']
+
+    def __str__(self):
+        return f'{self.character.name} 프사 {self.set_at:%Y-%m-%d}'
 
 
 class Persona(models.Model):

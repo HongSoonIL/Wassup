@@ -8,8 +8,10 @@ export type PostSummary = {
   published_at: string
   photo: { url: string; alt: string }
 }
+export type ProfilePhoto = { id: number; url: string; set_at: string; ai_generated: boolean; current: boolean }
 export type Profile = {
   id: number; room_id: number; name: string; profile_image: string | null
+  profile_photos?: ProfilePhoto[]
   status_message: string; current_activity: string | null; next_cursor: string | null
   posts: (PostSummary & { photo: { ai_generated: boolean }; previous_post?: PostSummary | null })[]
 }
