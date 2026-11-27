@@ -20,7 +20,6 @@ from config.llm import model_for
 from llm.chat_photos import POST_LINK_KEY, post_link_is_current
 from llm import personal_posts
 from chat.birthdays import delivered_in_chat
-from chat.crisis import CRISIS_BUBBLES, is_crisis
 from llm.dialogue import context_for, exam_fallback, fake_reply, openai_reply, sample_reply
 from memory.services import enqueue, history_floor, memory_revision, remember_new_result, result_precision_changed
 from world.clock import world_now
@@ -80,9 +79,6 @@ def _accept_message(message, source_post_id):
     message.save(force_insert=True)
     remember_new_result(message)
     enqueue(message)
-    if is_crisis(message.text):
-        answer_crisis(room, message, now)
-        return message
     plan = room.reply_plans.select_for_update().filter(status__in=ACTIVE).first()
     if plan and plan.status == ReplyPlan.Status.SENDING:
         cancel_remaining(plan)
@@ -129,38 +125,6 @@ def _accept_message(message, source_post_id):
             preference_revision=room.user.preference_revision,
         )
     return message
-
-
-def answer_crisis(room, message, now):
-    """일과와 지연 규칙을 건너뛰고, 받은 즉시 읽고 안내 말풍선을 보낸다 (설계서 3.10절)."""
-    events = [{'type': 'typing.stop'}]
-    # 준비 중이던 답장이나 이어 보내던 말풍선은 모두 멈춘다.
-    for plan in room.reply_plans.select_for_update().filter(status__in=ACTIVE):
-        cancel_remaining(plan)
-
-    unread = room.messages.filter(sender=Message.Sender.USER, read_at__isnull=True)
-    ids = list(unread.values_list('id', flat=True))
-    unread.update(read_at=now)
-    message.read_at = now
-    events.extend({'type': 'message.read', 'message_id': pk, 'read_at': iso(now)} for pk in ids)
-
-    plan = ReplyPlan.objects.create(
-        room=room,
-        trigger_message=message,
-        read_at=now,
-        typing_at=now,
-        reply_at=now,
-        result=list(CRISIS_BUBBLES),
-        status=ReplyPlan.Status.SENT,
-        model_name='crisis',
-        preference_revision=room.user.preference_revision,
-    )
-    for position, text in enumerate(CRISIS_BUBBLES):
-        reply = Message.objects.create(room=room, sender=Message.Sender.CHARACTER, text=text, created_at=now)
-        ReplyBubble.objects.create(plan=plan, position=position, text=text, status=ReplyBubble.Status.SENT,
-                                   typing_at=now, deliver_at=now, message=reply)
-        events.append({'type': 'message.new', 'message': message_json(reply, now=now)})
-    transaction.on_commit(lambda: publish_room_events(room.pk, events))
 
 
 def dispatch_due(now=None, limit=100):
